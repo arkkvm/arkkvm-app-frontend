@@ -780,6 +780,7 @@
     },
     "netbird": {
       "title": "NetBird",
+      "setupKeyRecommended": "Recommended for always-on devices: peers added with a setup key do not need to log in again.",
       "desc": "Connect ArkKVM to your NetBird network – NetBird Cloud or your own self-hosted management server",
       "serverHint": "Self-host the whole control plane to stay independent of third-party services",
       "managementUrlHint": "URL of your self-hosted NetBird management service",
@@ -799,6 +800,7 @@
         "unknown": "Unknown"
       },
       "fields": {
+        "loginExpires": "Login expires",
         "server": "Management server",
         "managementUrl": "Management URL",
         "hostname": "Peer hostname",
@@ -819,6 +821,7 @@
         "cancel": "Cancel"
       },
       "messages": {
+        "loginExpiryWarning": "This device joined via SSO and must log in again when the session expires – until then it is unreachable over NetBird. For an always-on KVM, disable login expiration for this peer in the NetBird dashboard or join with a setup key instead.",
         "settingsSaved": "NetBird settings saved",
         "joined": "ArkKVM joined your NetBird network",
         "disabled": "NetBird is disabled",

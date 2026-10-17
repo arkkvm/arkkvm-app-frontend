@@ -245,6 +245,9 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
   const busy = isLoading('switchNetbird') || isLoading('registerNetbird');
   const showAuth = state.enabled && (reauth || (connectionState !== 'connected' && connectionState !== 'connecting'));
   const peers = state.status?.peers;
+  const sessionExpiresAt = state.status?.sessionExpiresAt
+    ? new Date(state.status.sessionExpiresAt)
+    : null;
 
   return (
     <SettingBlock
@@ -412,7 +415,7 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
                   value={setupKey}
                   size="xs"
                   onChange={e => setSetupKey(e.target.value)}
-                  description={t('settings:accessibility.netbird.setupKeyHint')}
+                  description={`${t('settings:accessibility.netbird.setupKeyHint')} ${t('settings:accessibility.netbird.setupKeyRecommended')}`}
                   disabled={busy}
                 />
                 <div className="flex justify-end gap-2">
@@ -488,6 +491,21 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
                     <span className="text-sm font-medium text-text select-text">{state.ip}</span>
                     <CopyButton text={state.ip} label="NetBird IP" variant="ghost" size="xs" />
                   </div>
+                </div>
+              )}
+              {sessionExpiresAt && !Number.isNaN(sessionExpiresAt.getTime()) && (
+                <div className="flex flex-col gap-1 py-4 border-b border-(--border-color)">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-text-muted">
+                      {t('settings:accessibility.netbird.fields.loginExpires')}
+                    </span>
+                    <span className="text-sm font-medium text-text">
+                      {sessionExpiresAt.toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-muted border-l-2 border-yellow-500 pl-3">
+                    {t('settings:accessibility.netbird.messages.loginExpiryWarning')}
+                  </p>
                 </div>
               )}
               {state.fqdn && (

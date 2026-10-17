@@ -34,7 +34,7 @@ export interface NetbirdPeer {
 }
 
 export interface NetbirdStatus {
-  peers: { total: number; connected: number; details: NetbirdPeer[] };
+  peers: { total: number; connected: number; details: NetbirdPeer[] | null };
   cliVersion: string;
   daemonVersion: string;
   /** Idle | Connecting | Connected | NeedsLogin | LoginFailed | SessionExpired */
@@ -50,6 +50,8 @@ export interface NetbirdStatus {
   fqdn: string;
   networks: string[] | null;
   profileName: string;
+  /** RFC 3339; set when the peer joined via SSO and login expiration is enabled */
+  sessionExpiresAt?: string | null;
 }
 
 export interface NetbirdStateResponse {
