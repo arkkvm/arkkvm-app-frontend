@@ -839,7 +839,8 @@
         "cancel": "取消"
       },
       "messages": {
-        "loginExpiryWarning": "此设备通过 SSO 加入，会话过期后需要重新登录，在此之前无法通过 NetBird 访问。对于常驻在线的 KVM，请在 NetBird 控制台中为此节点禁用登录过期，或改用设置密钥加入。",
+        "ssoSessionExpiryHint": "使用 SSO 时，NetBird 默认会在一段时间后结束此设备的会话，需要重新登录，在此之前无法通过 NetBird 访问 KVM。请在 NetBird 控制台的设置中关闭 \"Session Expiration\"，或使用下方的设置密钥加入。",
+        "loginExpiryWarning": "此设备通过 SSO 加入，其会话将在上述时间过期，之后在重新登录前无法通过 NetBird 访问。对于常驻在线的 KVM，请在 NetBird 控制台的设置中关闭 \"Session Expiration\"，或改用设置密钥加入。",
         "settingsSaved": "NetBird 设置已保存",
         "joined": "ArkKVM 已加入您的 NetBird 网络",
         "disabled": "NetBird 已禁用",

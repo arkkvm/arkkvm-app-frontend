@@ -400,6 +400,9 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
                     {t('settings:accessibility.netbird.messages.waitingForLogin')}
                   </p>
                 )}
+                <p className="text-xs text-text-muted border-l-2 border-yellow-500 pl-3">
+                  {t('settings:accessibility.netbird.messages.ssoSessionExpiryHint')}
+                </p>
               </div>
 
               {/* Setup key */}

@@ -821,7 +821,8 @@
         "cancel": "Cancel"
       },
       "messages": {
-        "loginExpiryWarning": "This device joined via SSO and must log in again when the session expires – until then it is unreachable over NetBird. For an always-on KVM, disable login expiration for this peer in the NetBird dashboard or join with a setup key instead.",
+        "ssoSessionExpiryHint": "With SSO, NetBird ends the device's session after a while by default and it has to log in again – until then the KVM is unreachable over NetBird. Turn off \"Session Expiration\" in the settings of your NetBird dashboard, or join with a setup key below.",
+        "loginExpiryWarning": "This device joined via SSO and its session expires at the time shown – after that it is unreachable over NetBird until it logs in again. For an always-on KVM, turn off \"Session Expiration\" in the settings of your NetBird dashboard, or join with a setup key instead.",
         "settingsSaved": "NetBird settings saved",
         "joined": "ArkKVM joined your NetBird network",
         "disabled": "NetBird is disabled",
