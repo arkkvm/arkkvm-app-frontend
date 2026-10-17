@@ -20,6 +20,7 @@ import { Select, SelectSeparator } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Textarea } from '../ui/textarea';
 import SettingBlock from './SettingBlock';
+import SettingNetbird from './SettingNetbird';
 import SettingPageContainer from './SettingPageContainer';
 import type { TailscaleConnectionState } from '@/api/rpc/tailscale';
 import {
@@ -842,6 +843,9 @@ export default function SettingAccessibility() {
                   </SettingBlock.Bottom>
                 )}
               </SettingBlock>
+
+              {/* NetBird (self-hostable WireGuard mesh) */}
+              <SettingNetbird tailscaleEnabled={tailscaleEnabled} />
             </SettingBlock.Bottom>
           </SettingBlock>
         </div>

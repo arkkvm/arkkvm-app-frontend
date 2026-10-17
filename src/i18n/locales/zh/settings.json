@@ -795,6 +795,62 @@
         "authExpiredBefore": "如果登录链接过期或认证未完成，请点击 \"",
         "authExpiredAfter": "\" 并重试。"
       }
+    },
+    "netbird": {
+      "title": "NetBird",
+      "desc": "将 ArkKVM 连接到您的 NetBird 网络（NetBird Cloud 或自托管的管理服务器）",
+      "serverHint": "自托管整个控制平面，不依赖第三方服务",
+      "managementUrlHint": "自托管 NetBird 管理服务的地址",
+      "hostnamePlaceholder": "设备主机名（默认）",
+      "setupKeyHint": "请在 NetBird 控制台中创建设置密钥。该密钥仅使用一次，不会保存在设备上。",
+      "enableHint": "启用 NetBird 以连接到 {{server}}。",
+      "peers": "已连接 {{connected}}/{{total}} 个节点",
+      "server": {
+        "cloud": "NetBird Cloud",
+        "selfHosted": "自托管"
+      },
+      "status": {
+        "connecting": "连接中...",
+        "connected": "已连接",
+        "offline": "离线",
+        "loggedOut": "需要登录",
+        "unknown": "未知"
+      },
+      "fields": {
+        "server": "管理服务器",
+        "managementUrl": "管理地址",
+        "hostname": "节点主机名",
+        "setupKey": "设置密钥",
+        "userCode": "验证码：",
+        "management": "管理服务器",
+        "status": "状态",
+        "netbirdIp": "NetBird IP",
+        "fqdn": "DNS 名称"
+      },
+      "actions": {
+        "authHint": "使用 SSO 或设置密钥将此 ArkKVM 加入您的 NetBird 网络。",
+        "ssoLogin": "使用 SSO 登录",
+        "openLogin": "打开登录页面",
+        "joinWithKey": "使用设置密钥加入",
+        "save": "保存",
+        "change": "更改",
+        "cancel": "取消"
+      },
+      "messages": {
+        "settingsSaved": "NetBird 设置已保存",
+        "joined": "ArkKVM 已加入您的 NetBird 网络",
+        "disabled": "NetBird 已禁用",
+        "registerFailed": "NetBird 注册失败",
+        "waitingForLogin": "正在等待另一个标签页中的登录完成...",
+        "serverChangeWarning": "更改管理服务器将删除此设备当前的 NetBird 身份，之后需要重新加入。",
+        "tailscaleOverlap": "Tailscale 也已启用。两者默认都使用 100.64.0.0/10 地址段，请确保 NetBird 网络地址段与 tailnet 不重叠。",
+        "statusUnavailable": "NetBird 正在启动，暂时无法获取状态。"
+      },
+      "errors": {
+        "managementUrlRequired": "请输入管理地址",
+        "invalidManagementUrl": "请输入有效的 http(s) 地址",
+        "invalidHostname": "仅允许字母、数字、'-' 和 '.'（最多 63 个字符）"
+      }
     }
   }
 }

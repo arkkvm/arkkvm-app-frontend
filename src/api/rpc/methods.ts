@@ -10,6 +10,12 @@ import type {
   SwitchTailscaleParams,
   TailscaleStateResponse,
 } from './tailscale';
+import type {
+  NetbirdStateResponse,
+  RegisterNetbirdParams,
+  RegisterNetbirdResponse,
+  SwitchNetbirdParams,
+} from './netbird';
 
 export interface StorageFileInfo {
   createdAt: string; // ISO timestamp
@@ -180,6 +186,10 @@ export interface MethodParamsMap {
   switchTailscale: SwitchTailscaleParams;
   registerTailscale: void;
   registerTailscaleForce: void;
+  getNetbirdState: void;
+  switchNetbird: SwitchNetbirdParams;
+  registerNetbird: RegisterNetbirdParams;
+  registerNetbirdForce: RegisterNetbirdParams;
   collectEvidence: void;
   getLocalFileInfo: { path: string };
   startLocalFileDownload: { path: string; offset?: number };
@@ -195,6 +205,10 @@ export interface MethodResultMap extends Record<MethodName, unknown> {
   switchTailscale: null;
   registerTailscale: RegisterTailscaleResponse;
   registerTailscaleForce: RegisterTailscaleResponse;
+  getNetbirdState: NetbirdStateResponse;
+  switchNetbird: null;
+  registerNetbird: RegisterNetbirdResponse;
+  registerNetbirdForce: RegisterNetbirdResponse;
   getVlanSettings: GetVlanSettingsResponse;
   getJigglerState: boolean;
   getJigglerConfig: JigglerConfig;
