@@ -35,6 +35,13 @@ type ServerMode = 'cloud' | 'selfHosted';
 interface SettingNetbirdProps {
   /** Used to warn about the shared 100.64.0.0/10 CGNAT range. */
   tailscaleEnabled?: boolean;
+  /**
+   * Enabling/disabling is done by the private network selector: hide the switch
+   * and only render while NetBird is enabled.
+   */
+  managed?: boolean;
+  /** Changing this value re-fetches the NetBird state (e.g. after the selector switched). */
+  refreshKey?: number;
 }
 
 /**
@@ -42,7 +49,11 @@ interface SettingNetbirdProps {
  * "Private Network" section next to Tailscale. Hidden when the system image
  * does not ship NetBird (`available: false`).
  */
-export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetbirdProps) {
+export default function SettingNetbird({
+  tailscaleEnabled = false,
+  managed = false,
+  refreshKey = 0,
+}: SettingNetbirdProps) {
   const { t } = useTranslation(['settings']);
   const [, isChannelReady, sendAsync] = useJsonRpc();
   const { isLoading, start, stop } = useLoadingMap([
@@ -97,7 +108,7 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
   useEffect(() => {
     if (!isChannelReady) return;
     void fetchState();
-  }, [isChannelReady, fetchState]);
+  }, [isChannelReady, fetchState, refreshKey]);
 
   // Poll while the user completes SSO in another tab.
   useEffect(() => {
@@ -115,7 +126,11 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
   // Refresh when returning from the login tab.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && state?.enabled && connectionState !== 'connected') {
+      if (
+        document.visibilityState === 'visible' &&
+        state?.enabled &&
+        connectionState !== 'connected'
+      ) {
         logger.info('Page became visible, refreshing NetBird state');
         void fetchState();
       }
@@ -237,13 +252,26 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
       }
       await handleRegisterResult(resp.result);
     },
-    [applySettings, settingsDirty, sendAsync, start, stop, reauth, setupKey, fetchState, handleRegisterResult]
+    [
+      applySettings,
+      settingsDirty,
+      sendAsync,
+      start,
+      stop,
+      reauth,
+      setupKey,
+      fetchState,
+      handleRegisterResult,
+    ]
   );
 
   if (!state?.available) return null;
+  if (managed && !state.enabled) return null;
 
   const busy = isLoading('switchNetbird') || isLoading('registerNetbird');
-  const showAuth = state.enabled && (reauth || (connectionState !== 'connected' && connectionState !== 'connecting'));
+  const showAuth =
+    state.enabled &&
+    (reauth || (connectionState !== 'connected' && connectionState !== 'connecting'));
   const peers = state.status?.peers;
   const sessionExpiresAt = state.status?.sessionExpiresAt
     ? new Date(state.status.sessionExpiresAt)
@@ -254,13 +282,15 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
       title={t('settings:accessibility.netbird.title')}
       content={t('settings:accessibility.netbird.desc')}
     >
-      <SettingBlock.Right>
-        <Switch
-          checked={state.enabled}
-          onCheckedChange={enabled => void handleToggle(enabled)}
-          disabled={!isChannelReady || busy}
-        />
-      </SettingBlock.Right>
+      {!managed && (
+        <SettingBlock.Right>
+          <Switch
+            checked={state.enabled}
+            onCheckedChange={enabled => void handleToggle(enabled)}
+            disabled={!isChannelReady || busy}
+          />
+        </SettingBlock.Right>
+      )}
 
       <SettingBlock.Bottom>
         <div className="flex flex-col gap-4 p-6 rounded-lg border border-(--border-color)">
@@ -281,7 +311,10 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
                 onChange={value => setServerMode(value as ServerMode)}
                 options={[
                   { value: 'cloud', label: t('settings:accessibility.netbird.server.cloud') },
-                  { value: 'selfHosted', label: t('settings:accessibility.netbird.server.selfHosted') },
+                  {
+                    value: 'selfHosted',
+                    label: t('settings:accessibility.netbird.server.selfHosted'),
+                  },
                 ]}
                 disabled={busy}
               />
@@ -423,7 +456,12 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
                 />
                 <div className="flex justify-end gap-2">
                   {reauth && (
-                    <Button variant="outline" size="xs" onClick={() => setReauth(false)} disabled={busy}>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => setReauth(false)}
+                      disabled={busy}
+                    >
                       {t('settings:accessibility.netbird.actions.cancel')}
                     </Button>
                   )}
@@ -460,7 +498,9 @@ export default function SettingNetbird({ tailscaleEnabled = false }: SettingNetb
                     {t('settings:accessibility.netbird.fields.management')}
                   </span>
                   <span className="text-sm font-medium text-text select-text break-all">
-                    {state.status?.management.url || state.managementUrl || NETBIRD_CLOUD_MANAGEMENT_URL}
+                    {state.status?.management.url ||
+                      state.managementUrl ||
+                      NETBIRD_CLOUD_MANAGEMENT_URL}
                   </span>
                 </div>
                 <Button variant="outline" size="xs" onClick={() => setReauth(true)} disabled={busy}>

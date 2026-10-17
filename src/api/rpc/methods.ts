@@ -16,6 +16,7 @@ import type {
   RegisterNetbirdResponse,
   SwitchNetbirdParams,
 } from './netbird';
+import type { PrivateNetworkState, SetPrivateNetworkParams } from './privateNetwork';
 
 export interface StorageFileInfo {
   createdAt: string; // ISO timestamp
@@ -190,6 +191,8 @@ export interface MethodParamsMap {
   switchNetbird: SwitchNetbirdParams;
   registerNetbird: RegisterNetbirdParams;
   registerNetbirdForce: RegisterNetbirdParams;
+  getPrivateNetwork: void;
+  setPrivateNetwork: SetPrivateNetworkParams;
   collectEvidence: void;
   getLocalFileInfo: { path: string };
   startLocalFileDownload: { path: string; offset?: number };
@@ -209,6 +212,8 @@ export interface MethodResultMap extends Record<MethodName, unknown> {
   switchNetbird: null;
   registerNetbird: RegisterNetbirdResponse;
   registerNetbirdForce: RegisterNetbirdResponse;
+  getPrivateNetwork: PrivateNetworkState;
+  setPrivateNetwork: null;
   getVlanSettings: GetVlanSettingsResponse;
   getJigglerState: boolean;
   getJigglerConfig: JigglerConfig;

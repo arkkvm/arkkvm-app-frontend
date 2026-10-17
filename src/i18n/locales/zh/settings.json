@@ -772,6 +772,24 @@
       "title": "私有网络",
       "desc": "选择并启用远程访问的私有网络服务"
     },
+    "privateNetworkSelector": {
+      "title": "当前网络",
+      "desc": "选择一个用于远程访问的覆盖网络。只运行一个可以节省内存并避免地址段重叠。",
+      "options": {
+        "none": "无",
+        "both": "Tailscale + NetBird"
+      },
+      "pending": "正在切换到 {{next}}——在 {{next}} 连接成功之前，{{previous}} 会保持运行，因此您仍可访问此设备。",
+      "legacyBoth": "Tailscale 和 NetBird 均已启用。请选择其中一个以节省内存并避免地址段重叠。",
+      "sessionVia": "您当前通过 {{overlay}} 连接到此设备。",
+      "lockout": {
+        "title": "您正通过此网络连接",
+        "disable": "此页面是通过 {{current}} 打开的。关闭后连接将断开，在本地或通过其他方式重新启用之前，无法通过 {{current}} 访问此设备。",
+        "switch": "此页面是通过 {{current}} 打开的。在 {{next}} 连接成功之前，{{current}} 会保持运行，之后此页面将断开连接。请通过 {{next}} 地址重新打开此设备。",
+        "confirm": "仍然关闭",
+        "continue": "继续"
+      }
+    },
     "tailscale": {
       "title": "Tailscale",
       "desc": "将 ArkKVM 连接到您的 Tailscale 网络",

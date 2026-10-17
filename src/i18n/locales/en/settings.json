@@ -754,6 +754,24 @@
       "title": "Private Network",
       "desc": "Choose and enable private network services for remote access"
     },
+    "privateNetworkSelector": {
+      "title": "Active network",
+      "desc": "Choose one overlay network for remote access. Running only one saves memory and avoids overlapping address ranges.",
+      "options": {
+        "none": "None",
+        "both": "Tailscale + NetBird"
+      },
+      "pending": "Switching to {{next}} – {{previous}} keeps running until {{next}} is connected, so you can still reach this device.",
+      "legacyBoth": "Tailscale and NetBird are both enabled. Choose one to save memory and avoid overlapping address ranges.",
+      "sessionVia": "You are connected to this device through {{overlay}}.",
+      "lockout": {
+        "title": "You are connected through this network",
+        "disable": "This page is open through {{current}}. Turning it off will disconnect you, and the device stays unreachable over {{current}} until it is turned on again locally or through another way in.",
+        "switch": "This page is open through {{current}}. {{current}} keeps running until {{next}} is connected – afterwards this page will disconnect. Reopen the device through its {{next}} address.",
+        "confirm": "Turn off anyway",
+        "continue": "Continue"
+      }
+    },
     "tailscale": {
       "title": "Tailscale",
       "desc": "Connect ArkKVM to your Tailscale network",
