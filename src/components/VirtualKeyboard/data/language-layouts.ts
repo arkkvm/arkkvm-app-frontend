@@ -74,6 +74,7 @@ import deCH from './layouts/de_CH';
 import deDE from './layouts/de_DE';
 import enGB from './layouts/en_GB';
 import enUS from './layouts/en_US';
+import colemakDH from './layouts/cm_dh';
 import esES from './layouts/es_ES';
 import frFR from './layouts/fr_FR';
 import nlBE from './layouts/nl_BE';
@@ -84,6 +85,7 @@ import type { LayoutChars } from '../utils/generateCharMap';
 const ALL_LANGUAGE_LAYOUTS: LanguageLayoutModule[] = [
   enUS,
   enGB,
+  colemakDH,
   csCZ,
   deCH,
   deDE,

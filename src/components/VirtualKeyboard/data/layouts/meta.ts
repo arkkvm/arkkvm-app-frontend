@@ -28,6 +28,20 @@ export const enGBMeta: LayoutMeta = {
   note: 'UK ISO layout',
 };
 
+export const colemakDHMeta: LayoutMeta = {
+  id: 'colemak-dh',
+  tag: 'DH',
+  name: 'English (Colemak-DH ANSI)',
+  nativeName: 'English (Colemak-DH ANSI)',
+  layout: 'colemak',
+  standard: 'ansi',
+  region: 'americas',
+  priority: 3,
+  recommended: false,
+  hasAltGr: false,
+  note: 'Colemak-DH ANSI layout',
+};
+
 export const csCZMeta: LayoutMeta = {
   id: 'cs-CZ-qwerty',
   tag: 'CZ',
@@ -119,6 +133,7 @@ export const nlBEMeta: LayoutMeta = {
 export const layoutMetas = [
   enUSMeta,
   enGBMeta,
+  colemakDHMeta,
   csCZMeta,
   deDEMeta,
   deCHMeta,

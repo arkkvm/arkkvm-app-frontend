@@ -8,6 +8,7 @@ import { generateCharMapFromLayout } from './generateCharMap';
 export type LayoutId =
   | 'en-US'
   | 'en-GB'
+  | 'colemak-dh'
   | 'cs-CZ'
   | 'de-DE'
   | 'de-CH'
