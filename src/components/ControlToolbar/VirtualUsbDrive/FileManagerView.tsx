@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import StorageUsage from '../../StorageUsage';
+import { StorageDeleteConfirmDialog, StorageDetailsDialog, type StorageDetailRow } from '../../StorageDetailsDialog';
 import {
   Breadcrumb,
   BreadcrumbEllipsis,
@@ -27,6 +28,7 @@ import { completedColumns } from './columns';
 import type { UseVirtualUsbDriveReturn } from './useVirtualUsbDrive';
 import { commandClass } from './utils';
 import { env } from '@/utils';
+import { formatBytes } from '@/utils/transfer';
 
 type FileManagerViewProps = UseVirtualUsbDriveReturn;
 
@@ -39,6 +41,7 @@ export default function FileManagerView(props: FileManagerViewProps) {
     currentPath,
     showCompletedList,
     storageInfo,
+    ftStorageDetails,
     selectedCompletedRowKeys,
     setSelectedCompletedRowKeys,
     isDownload,
@@ -52,6 +55,7 @@ export default function FileManagerView(props: FileManagerViewProps) {
     handleCreateFile,
     handleMountWithFileImg,
     handleDelete,
+    handleDeleteAllFiles,
     handleDownload,
     handleBreadcrumbClick,
     getCompletedList,
@@ -65,6 +69,14 @@ export default function FileManagerView(props: FileManagerViewProps) {
     logger,
     uploadDropZoneRef,
   } = props;
+  const [storageDetailsOpen, setStorageDetailsOpen] = React.useState(false);
+  const [deleteAllFilesOpen, setDeleteAllFilesOpen] = React.useState(false);
+  const confirmDeleteAllFiles = React.useCallback(async () => {
+    await handleDeleteAllFiles();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setDeleteAllFilesOpen(false);
+    setStorageDetailsOpen(false);
+  }, [handleDeleteAllFiles]);
   const breadcrumbNodes = React.useMemo(() => {
     const norm = (p: string) => p.replace(/\\+/g, '/');
     const clean = norm(currentPath || '/');
@@ -158,6 +170,25 @@ export default function FileManagerView(props: FileManagerViewProps) {
       </Breadcrumb>
     );
   }, [currentPath, truncateBytes, handleBreadcrumbClick]);
+
+  const openClearFilesConfirm = () => setDeleteAllFilesOpen(true);
+  const deleteAllFilesDisabled = hasActiveTransfers || isLoading('deleteAllFiles');
+  const storageRows: StorageDetailRow[] = (ftStorageDetails?.categories ?? []).map(category => {
+    const label = t(`toolbar.virtualUsbDrive.storageDetails.categories.${category.id}`, {
+      defaultValue: category.label,
+    });
+
+    return {
+      label,
+      bytes: category.bytesUsed,
+      required: !category.clearable,
+      actionLabel: category.clearable
+        ? t('toolbar.virtualUsbDrive.storageDetails.deleteAllCategory', { label })
+        : undefined,
+      onAction: category.clearable ? openClearFilesConfirm : undefined,
+      actionDisabled: deleteAllFilesDisabled || category.bytesUsed === 0,
+    };
+  });
 
   return (
     <div className="w-full min-w-0 space-y-[10px]">
@@ -387,12 +418,39 @@ export default function FileManagerView(props: FileManagerViewProps) {
       {fileTransferState === 'Kvm' ? (
         <div className={cn(commandClass, 'border border-[var(--border)]')}>
           <StorageUsage
-            total={storageInfo.total_space * 1024}
-            used={storageInfo.used_space * 1024}
-            free={storageInfo.free_space * 1024}
-            loading={isLoading('ftFileSystemInfo')}
+            totalBytes={ftStorageDetails?.bytesTotal ?? (storageInfo?.total_space ?? 0) * 1024}
+            usedBytes={ftStorageDetails?.bytesUsed ?? (storageInfo?.used_space ?? 0) * 1024}
+            freeBytes={ftStorageDetails?.bytesFree ?? (storageInfo?.free_space ?? 0) * 1024}
+            systemBytes={ftStorageDetails?.categories.find(category => category.id === 'targetOs')?.bytesUsed}
+            contentBytes={ftStorageDetails?.categories.find(category => category.id === 'userFiles')?.bytesUsed}
+            contentType="userFiles"
+            onOpenDetails={() => setStorageDetailsOpen(true)}
+            loading={isLoading('ftFileSystemInfo') || isLoading('getFtStorageDetails')}
             title={t('toolbar.virtualUsbDrive.availableStorage')}
+            rightText={percent => t('toolbar.virtualUsbDrive.storageDetails.usedPercent', { percent })}
+            usedText={bytes => t('toolbar.virtualUsbDrive.storageDetails.usedBytes', { size: formatBytes(bytes) })}
+            freeText={bytes => t('toolbar.virtualUsbDrive.storageDetails.freeBytes', { size: formatBytes(bytes) })}
             className="mt-2"
+          />
+          <StorageDetailsDialog
+            open={storageDetailsOpen}
+            onOpenChange={setStorageDetailsOpen}
+            title={t('toolbar.virtualUsbDrive.storageDetails.title')}
+            typeLabel={t('toolbar.virtualUsbDrive.storageDetails.type')}
+            usedLabel={t('toolbar.virtualUsbDrive.storageDetails.used')}
+            requiredLabel={t('toolbar.virtualUsbDrive.storageDetails.required')}
+            closeLabel={t('toolbar.virtualUsbDrive.storageDetails.ok')}
+            note={t('toolbar.virtualUsbDrive.storageDetails.targetOsNote')}
+            rows={storageRows}
+          />
+          <StorageDeleteConfirmDialog
+            open={deleteAllFilesOpen}
+            onOpenChange={setDeleteAllFilesOpen}
+            title={t('toolbar.virtualUsbDrive.storageDetails.deleteFilesTitle')}
+            description={t('toolbar.virtualUsbDrive.storageDetails.deleteFilesDescription')}
+            cancelLabel={t('toolbar.virtualUsbDrive.storageDetails.cancel')}
+            confirmLabel={t('toolbar.virtualUsbDrive.storageDetails.deleteAllFiles')}
+            onConfirm={confirmDeleteAllFiles}
           />
         </div>
       ) : (

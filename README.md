@@ -33,11 +33,13 @@ Start cloud development mode:
 API_DOMAIN=https://api.example.com pnpm dev:cloud
 ```
 
-Build default artifacts:
+Build Cloud and Device without generating a release version:
 
 ```bash
-pnpm build
+./build.sh
 ```
+
+For a versioned Cloud release ZIP, use `./build.sh --version <version>` or `./build.sh --auto-version`. See [Build](#build).
 
 ## Development
 
@@ -46,15 +48,15 @@ Package scripts:
 ```bash
 pnpm dev          # Start device development mode; requires DEVICE_IP
 pnpm dev:cloud    # Start cloud development mode
-pnpm build        # Build device and versioned cloud outputs
-pnpm build:test   # Build test environment outputs
-pnpm build:flat   # Build device and self-hosted flat cloud outputs
-pnpm check        # Run project checks
+pnpm build        # Build dist/cloud and dist/device; no automatic ZIP/version
+pnpm build:test   # Same layout; Device uses .env.test, Cloud still uses runtime config
+pnpm build:flat   # Compatibility alias for the default build
+pnpm check        # Run ESLint (not TypeScript, tests, or build)
 pnpm lint         # Run ESLint
 pnpm lint:fix     # Run ESLint with fixes
 ```
 
-`run.sh` is the unified development and target build entry:
+`run.sh` starts development or builds a single target. Its `build` action does **not** generate a new version, write dist version files, or create/update ZIP archives:
 
 ```bash
 ./run.sh <action> <target> [env] [value]
@@ -85,85 +87,131 @@ Port `80` may require elevated permissions or local configuration changes.
 
 ## Build
 
-`build.sh` runs the full frontend build flow:
-
-```bash
-./build.sh [env] [version]
-./build.sh [version]
-```
-
-- `env`: `pro` or `test`, default `pro`
-- `version`: optional. If omitted, a version is generated automatically.
-- Passing only a version uses the default `pro` environment.
-
-Examples:
+Run from the repository root (or invoke build.sh by its path):
 
 ```bash
 ./build.sh
-./build.sh test
-./build.sh 1.2.3
-./build.sh pro 1.2.3
+./build.sh --version 0.6.261010263
+./build.sh --auto-version
 ```
 
-Build output:
+| Command | Outputs |
+| --- | --- |
+| `./build.sh` | `dist/cloud/`, `dist/device/` |
+| `./build.sh --version <version>` | `dist/<version>/`, `dist/<version>.zip`, `dist/device/`, `dist/version` |
+| `./build.sh --auto-version` | Same versioned release layout, using the existing generator |
+| `./build.sh --target cloud` | Only `dist/cloud/` |
+| `./build.sh --target cloud --version <version>` | Only Cloud version directory/ZIP and `dist/version` |
+| `./build.sh --target device` | Only `dist/device/` |
+| `./build.sh --target device --version <version>` | `dist/device/` and its version file, plus `dist/version`; no Cloud ZIP |
+| `./build.sh --target cloud --archive` | `dist/cloud/` and `dist/cloud.zip` |
 
-- `dist/device/`
-- `dist/{version}/` or `dist/cloud/`
-- `dist/{version}.zip` or `dist/cloud.zip`
-- `dist/version`
+`--target` defaults to `all`. `--version` and `--auto-version` are mutually exclusive. Old positional `pro`, `test`, and version arguments are rejected; use the named options. Versioned Cloud builds always create a ZIP; `--archive` additionally enables ZIP for unversioned Cloud builds and has no effect on Device-only builds.
 
-## Cloud Build Modes
+### Complete release example
 
-Cloud builds support two output modes.
-
-Versioned mode is the default and is used for official cloud release layout:
-
-- `dist/{version}/`
-- `dist/{version}.zip`
-- `assetPrefix = /{version}/`
+From the repository root, use Node.js 20.18.0+ and pnpm 10.11.1+. The following example installs locked dependencies, builds both targets with an automatic version, then checks the exact release artifacts. The subshell stops on failure so an older ZIP is not accidentally selected after a failed build.
 
 ```bash
-./build.sh pro 0.2.26061893
+(
+  set -e
+  pnpm install --frozen-lockfile
+
+  # Generate the next release version and build Cloud + Device.
+  ./build.sh --auto-version
+
+  # Read the version produced by this successful build.
+  release_version="$(cat dist/version)"
+  test -s "dist/$release_version/index.html"
+  test -s dist/device/index.html
+  test "$(cat "dist/$release_version/version")" = "$release_version"
+  test "$(cat dist/device/version)" = "$release_version"
+
+  # Verify ZIP integrity and inspect its version-directory hierarchy.
+  unzip -t "dist/$release_version.zip"
+  unzip -l "dist/$release_version.zip"
+  printf 'Upload this Cloud release: dist/%s.zip\n' "$release_version"
+)
 ```
 
-Flat mode is intended for self-hosted deployments served from the domain root:
+If the generated version is `0.6.261010264`, upload **`dist/0.6.261010264.zip`** in the cloud version-management page. The ZIP starts with `0.6.261010264/` and contains that release's `index.html`, `version`, `js/` and `static/`. Device artifacts remain in `dist/device/` and are not inside the Cloud ZIP. The version here is illustrative; automatic output depends on the build machine's date and `.env.pro` version history.
 
-- `dist/cloud/`
-- `dist/cloud.zip`
-- `assetPrefix = /`
+To use an exact version, replace the build line above with the following (choose an unused version):
 
 ```bash
-CLOUD_BUILD_MODE=flat ./build.sh pro 0.2.26061893
-pnpm build:flat
+./build.sh --version 0.6.261010263
 ```
 
-If `CLOUD_BUILD_MODE` is omitted or set to any value other than `flat`, the build uses versioned mode.
+For a Cloud-only release, replace it with `./build.sh --target cloud --auto-version` and omit the two Device checks. No API address arguments or `ARKKVM_CLOUD_RUNTIME_ONLY` flag are required. For example, when deployed at `https://app-tst.arkkvm.com`, missing runtime JSON falls back to `https://api-tst.arkkvm.com`; an unknown/self-hosted domain defaults to the current origin when runtime JSON is unavailable; provide valid site-root runtime JSON for a separate API origin. Uploading the ZIP does not itself configure server routing or CSP; after selecting/publishing the release, verify `/login`, its versioned assets, and `/oidc/providers` in the browser.
 
-## Environment Variables
+### Release layout and deployment
 
-| Variable | Description | Example / Default |
-| --- | --- | --- |
-| `DEVICE_IP` | Device IP for device dev mode when no script value is provided | `192.168.x.x` |
-| `API_DOMAIN` | Cloud API domain override | `https://api.example.com` |
-| `APP_DOMAIN` | Cloud app domain override | `https://app.example.com` |
-| `RSB_API_BASE_URL_CLOUD` | Cloud API fallback before the built-in default | Not set |
-| `CLOUD_BUILD_MODE` | Cloud output mode: `versioned` or `flat` | `versioned` |
-| `DEBUG_RUN` | Print detailed `run.sh` environment values when set to `1` | Not set |
-| `DEBUG_BUILD` | Print selected Rsbuild resolved values when set to `1` | Not set |
+```text
+dist/
+├── <version>/
+│   ├── index.html
+│   ├── version
+│   ├── js/
+│   └── static/
+├── <version>.zip
+├── device/
+│   ├── index.html
+│   └── version
+└── version
+```
 
-Cloud API domain resolution priority:
+Cloud is never nested under `<version>/cloud/`. Device is always `dist/device/`. The Cloud ZIP contains only the selected `<version>/` directory, including that directory level; upload `dist/<version>.zip` to cloud version management. Versioned HTML references `/<version>/...`; the server must serve those paths and route `/login` to the selected entry. Unversioned Cloud uses root-relative assets and is deployed from `dist/cloud/`.
 
-1. `value` argument when `target=cloud`
-2. `API_DOMAIN`
-3. `RSB_API_BASE_URL_CLOUD`
-4. `RSB_API_BASE_URL_CLOUD` from `.env.{env}`
-5. `https://api.example.com`
+Only the selected target directories are replaced. Historical versions and unselected targets/archives are retained. A fresh ZIP is created in staging rather than updating an existing ZIP, preventing stale entries from previous builds. Invalid arguments, failed builds, missing HTML/JS outputs, metadata failures and ZIP failures return nonzero. Requested targets are built and checked before publishing; build/archive failure leaves existing published output directories intact.
 
-Cloud app domain resolution priority:
+### Versions and device compatibility
 
-1. `APP_DOMAIN`
-2. `RSB_APP_BASE_URL_CLOUD` from `.env.{env}`
-3. `https://app.example.com`
+`--version` and `--auto-version` reuse `scripts/generate-version.ts`, then `scripts/write-dist-version.ts`. The shared release version record remains `RSB_APP_VERSION` in `.env.pro`; this is version history, not a Cloud API configuration dependency. Automatic versions preserve the first two components and use the local date `YYMMDD` plus a sequence starting at `01`; same-day sequences continue through `99 → 100` and `261 → 262`. A missing record defaults the prefix to `0.0`. Version generation updates the record before building, even if a later build fails.
+
+Versioned builds write `dist/version`, the selected Cloud directory's `version`, and Device's `version` when Device is built. Default builds do not generate a new version or write these metadata files; normal package/env version values still apply inside bundles. An exported `VERSION` no longer implicitly changes build.sh output layout: use its explicit version options.
+
+Device configuration continues through `run.sh`, defaulting to `.env.pro`. Use `DEVICE_BUILD_ENV=test ./build.sh` (or `pnpm build:test`) to retain Device's test configuration. A supplied release version overrides the embedded Device version, but Device API configuration is unchanged. Cloud always uses runtime configuration, independent of this device environment selection.
+
+### Cloud runtime configuration
+
+No address flags are needed with build.sh. It automatically enables `ARKKVM_CLOUD_RUNTIME_ONLY=1` for Cloud, clearing six injected API/App address values. It does not delete env files or omit bundled Switch destinations.
+
+Production Cloud loads `/runtime-config.json` at the site root before loading App. The build does not generate or embed this optional file:
+
+```json
+{
+  "apiBaseUrl": "https://api-tst.arkkvm.com",
+  "appBaseUrl": "https://app-tst.arkkvm.com"
+}
+```
+
+Both fields must be HTTP(S) origins without credentials, paths, queries or fragments. Valid JSON takes priority. Missing files, HTTP/network failure, the three-second configuration timeout, or HTML cause a warning and hostname fallback only for `^app(-tst)?\.arkkvm\.(com|cn)$`: replace the initial `app` with `api`, preserving protocol/port; app origin stays current. Invalid JSON or invalid fields stop startup. Unknown domains preserve explicit non-official self-hosted build configuration when available; otherwise API, login and signaling use the current origin (including protocol and port), without adding an /api prefix. Provide runtime JSON when the API uses a separate origin. Business API failures never change the selected address.
+
+`cloud-regions.json` is the single source of official cloud region defaults for device binding, cloud region navigation, and `run.sh`. It groups `global` and `china` under `production` and `test`; each region explicitly defines `apiUrl` and `appUrl` as HTTP(S) origins without paths, credentials, queries, or fragments. `pro` selects `production`; `test` selects `test`. Test China currently uses the production China endpoints intentionally. Changing this bundled file requires rebuilding.
+
+Existing build-time endpoint overrides still take priority over these defaults for device binding and development. Production cloud API resolution continues to use `runtime-config.json`, official hostname inference, and the existing self-hosted fallback; the region map does not override the current deployment's runtime API address. Custom device binding URLs remain supported. IP detection requires deployment CSP `connect-src` permission for `https://ipwho.is`. Server headers are not changed by building. Provider lookup uses the shared request timeout and retries once on failure.
+
+### Lower-level builds and diagnostics
+
+`run.sh` remains available for existing development and target-specific workflows:
+
+```bash
+./run.sh build device pro
+./run.sh build device test
+ARKKVM_CLOUD_RUNTIME_ONLY=1 CLOUD_BUILD_MODE=flat ./run.sh build cloud
+```
+
+These commands do not generate new versions, write dist version files, or create ZIPs. Cloud address injection is retained only for legacy run.sh workflows without runtime-only enabled; build.sh always uses runtime-only Cloud. Existing address arguments (`API_DOMAIN`, `APP_DOMAIN`, China counterparts and device IP) remain available for development/device configuration. The `example.com` fallback values are placeholders.
+
+`DEBUG_RUN=1` prints script inputs; `DEBUG_BUILD=1` prints Rsbuild configuration. `ANALYZE=1` enables the existing bundle analyzer. These diagnostics do not disable production optimization. `CLOUD_BUILD_MODE` remains a low-level run.sh layout option; build.sh determines layout from its version flags and ignores inherited layout/address-policy switches.
+
+Builds do not automatically run types, lint or tests. Build orchestration regression checks use Node's built-in test runner:
+
+```bash
+node --test scripts/build.test.mjs
+```
+
+Current package scripts do not define Desktop builds.
 
 ## Project Structure
 

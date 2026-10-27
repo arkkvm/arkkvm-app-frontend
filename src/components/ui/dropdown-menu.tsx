@@ -3,6 +3,7 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react';
 import * as React from 'react';
 
 import { cn } from '@/lib/utils';
+import { stableTextChildren } from './stable-text-children';
 
 function DropdownMenu({
   ...props
@@ -79,6 +80,7 @@ function DropdownMenuItem({
   className,
   inset,
   variant = 'default',
+  children,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & {
   inset?: boolean
@@ -94,7 +96,9 @@ function DropdownMenuItem({
         className
       )}
       {...props}
-    />
+    >
+      {props.asChild ? children : stableTextChildren(children)}
+    </DropdownMenuPrimitive.Item>
   );
 }
 
@@ -119,7 +123,7 @@ function DropdownMenuCheckboxItem({
           <CheckIcon className="size-4" />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
-      {children}
+      {props.asChild ? children : stableTextChildren(children)}
     </DropdownMenuPrimitive.CheckboxItem>
   );
 }
@@ -154,7 +158,7 @@ function DropdownMenuRadioItem({
           <CircleIcon className="size-2 fill-current" />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
-      {children}
+      {props.asChild ? children : stableTextChildren(children)}
     </DropdownMenuPrimitive.RadioItem>
   );
 }

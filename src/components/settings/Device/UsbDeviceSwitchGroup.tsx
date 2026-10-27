@@ -15,6 +15,8 @@ export interface UsbDeviceSwitchGroupProps {
    * Whether all switches are disabled
    */
   disabled?: boolean
+  lockedDevices?: (keyof UsbDeviceConfig)[]
+  onLockedInteraction?: () => void
   /**
    * Title font size
    */
@@ -41,6 +43,8 @@ export default function UsbDeviceSwitchGroup({
   value,
   onChange,
   disabled = false,
+  lockedDevices = [],
+  onLockedInteraction,
   titleSize = 12,
   contentSize = 10,
   className,
@@ -84,17 +88,24 @@ export default function UsbDeviceSwitchGroup({
         contentSize={contentSize}
       />
 
+      <div className={lockedDevices.includes('relative_mouse') ? 'relative opacity-50' : undefined}>
       <SettingSwitch
         title={t('settings:hardware.usb.devices.relativeMouse.title')}
         content={t('settings:hardware.usb.devices.relativeMouse.desc')}
-        checked={value.relative_mouse}
+        checked={lockedDevices.includes('relative_mouse') ? false : value.relative_mouse}
         onCheckedChange={enabled =>
           handleDeviceToggle('relative_mouse', enabled)
         }
-        disabled={disabled}
+        disabled={disabled || lockedDevices.includes('relative_mouse')}
         titleSize={titleSize}
         contentSize={contentSize}
       />
+        {lockedDevices.includes('relative_mouse') && !disabled && (
+          <button type="button" className="absolute inset-0 w-full rounded focus-visible:outline focus-visible:outline-ring"
+            aria-label={t('settings:hardware.usb.devices.relativeMouse.title')}
+            onClick={onLockedInteraction} />
+        )}
+      </div>
 
       <SettingSwitch
         title={t('settings:hardware.usb.devices.virtualStorage.title')}
@@ -106,15 +117,22 @@ export default function UsbDeviceSwitchGroup({
         contentSize={contentSize}
       />
 
+      <div className={lockedDevices.includes('microphone') ? 'relative opacity-50' : undefined}>
       <SettingSwitch
         title={t('settings:hardware.usb.devices.usbMicrophone.title')}
         content={t('settings:hardware.usb.devices.usbMicrophone.desc')}
-        checked={value.microphone}
+        checked={lockedDevices.includes('microphone') ? false : value.microphone}
         onCheckedChange={enabled => handleDeviceToggle('microphone', enabled)}
-        disabled={disabled}
+        disabled={disabled || lockedDevices.includes('microphone')}
         titleSize={titleSize}
         contentSize={contentSize}
       />
+        {lockedDevices.includes('microphone') && !disabled && (
+          <button type="button" className="absolute inset-0 w-full rounded focus-visible:outline focus-visible:outline-ring"
+            aria-label={t('settings:hardware.usb.devices.usbMicrophone.title')}
+            onClick={onLockedInteraction} />
+        )}
+      </div>
     </div>
   );
 }

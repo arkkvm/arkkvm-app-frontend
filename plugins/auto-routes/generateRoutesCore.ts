@@ -106,7 +106,9 @@ async function generate() {
       filePath,
     };
   });
-  const routeEntries = [];
+  // Both build targets share this generated file. Keep its contents independent
+  // of the generating process so a cloud build cannot replace device dev routes.
+  const routeEntries: Record<'device' | 'cloud', string[]> = { device: [], cloud: [] };
 
   for (const { routePath, importPath, filePath } of routeInfos as RouteInfo[]) {
     if (!filePath || !fs.existsSync(filePath)) {
@@ -117,60 +119,64 @@ async function generate() {
       // Statically parse page meta
       const meta = extractMetaFromFile(filePath);
       // Allow meta.path / meta.cloudPath to override generated route path
-      let finalPath = routePath;
-      const buildTarget = process.env.BUILD_TARGET;
+      for (const buildTarget of ['device', 'cloud'] as const) {
+        let finalPath = routePath;
 
-      // Filter routes by page target so only relevant routes are bundled
-      const pageTarget = meta.target || 'universal'; // default: universal
+        // Filter routes by page target so only relevant routes are bundled
+        const pageTarget = meta.target || 'universal'; // default: universal
 
-      // Keep only pages required by the current build target
-      if (buildTarget === 'cloud' && pageTarget === 'device') {
-        console.log(`⏭️ Skipping device-only page: ${filePath}`);
-        continue;
-      }
-      if (buildTarget === 'device' && pageTarget === 'cloud') {
-        console.log(`⏭️ Skipping cloud-only page: ${filePath}`);
-        continue;
-      }
-
-      // Choose the route path based on build target
-      let candidatePath = '';
-      if (buildTarget === 'cloud' && typeof meta.cloudPath === 'string' && meta.cloudPath.trim() !== '') {
-        candidatePath = meta.cloudPath;
-      } else if (typeof meta.path === 'string' && meta.path.trim() !== '') {
-        candidatePath = meta.path;
-      }
-
-      if (candidatePath) {
-        finalPath = candidatePath.startsWith('/') ? candidatePath : `/${candidatePath}`;
-        // Preserve root path '/' from trailing-slash cleanup
-        if (finalPath !== '/') {
-          finalPath = finalPath.replace(/\/+$/, '');
+        // Keep only pages required by the current build target
+        if (buildTarget === 'cloud' && pageTarget === 'device') {
+          console.log(`⏭️ Skipping device-only page: ${filePath}`);
+          continue;
         }
-      }
+        if (buildTarget === 'device' && pageTarget === 'cloud') {
+          console.log(`⏭️ Skipping cloud-only page: ${filePath}`);
+          continue;
+        }
 
-      const metaCopy = { ...meta };
-      delete metaCopy.path;
-      delete metaCopy.cloudPath;
-      delete metaCopy.target;
-      // Note: finalPath should already be sanitized, no need for aggressive cleaning
-      // Only ensure it starts with '/' if not empty
-      if (finalPath && !finalPath.startsWith('/')) {
-        finalPath = '/' + finalPath;
+        // Choose the route path based on build target
+        let candidatePath = '';
+        if (buildTarget === 'cloud' && typeof meta.cloudPath === 'string' && meta.cloudPath.trim() !== '') {
+          candidatePath = meta.cloudPath;
+        } else if (typeof meta.path === 'string' && meta.path.trim() !== '') {
+          candidatePath = meta.path;
+        }
+
+        if (candidatePath) {
+          finalPath = candidatePath.startsWith('/') ? candidatePath : `/${candidatePath}`;
+          // Preserve root path '/' from trailing-slash cleanup
+          if (finalPath !== '/') {
+            finalPath = finalPath.replace(/\/+$/, '');
+          }
+        }
+
+        const metaCopy = { ...meta };
+        delete metaCopy.path;
+        delete metaCopy.cloudPath;
+        delete metaCopy.target;
+        // Note: finalPath should already be sanitized, no need for aggressive cleaning
+        // Only ensure it starts with '/' if not empty
+        if (finalPath && !finalPath.startsWith('/')) {
+          finalPath = '/' + finalPath;
+        }
+        const indent = '  ';
+        const metaStr = Object.entries(metaCopy).length > 0
+          ? `,\n${indent.repeat(3)}meta: ${JSON.stringify(metaCopy, null, 2).replace(/\n/g, `\n${indent.repeat(3)}`)}`
+          : '';
+        const routeStr = `${indent.repeat(1)}{\n${indent.repeat(2)}path: '${finalPath}',\n${indent.repeat(2)}element: lazy(() => import('${importPath}'))${metaStr}\n${indent.repeat(1)}}`;
+        routeEntries[buildTarget].push(routeStr);
       }
-      const indent = '  ';
-      const metaStr = Object.entries(metaCopy).length > 0
-        ? `,\n${indent.repeat(3)}meta: ${JSON.stringify(metaCopy, null, 2).replace(/\n/g, `\n${indent.repeat(3)}`)}`
-        : '';
-      const routeStr = `${indent.repeat(1)}{\n${indent.repeat(2)}path: '${finalPath}',\n${indent.repeat(2)}element: lazy(() => import('${importPath}'))${metaStr}\n${indent.repeat(1)}}`;
-      routeEntries.push(routeStr);
     } catch (error) {
     }
   }
 
-  const fileContent = `/* This file is auto-generated by generateRoutes.ts. Do not edit manually. */\nimport { lazy } from 'react';\nimport { RouteObject } from 'react-router-dom';\n\nexport interface CustomRouteObject extends RouteObject {\n  meta?: {\n    auth?: boolean;\n    title?: string;\n    isMenu?: boolean;\n    icon?: string;\n    target?: 'device' | 'cloud' | 'universal';\n  };\n}\n\nexport const routes: CustomRouteObject[] = [\n${routeEntries.join(',\n')}\n];\n`;
+  const fileContent = `/* This file is auto-generated by generateRoutes.ts. Do not edit manually. */\nimport { lazy } from 'react';\nimport { RouteObject } from 'react-router-dom';\n\nexport interface CustomRouteObject extends RouteObject {\n  meta?: {\n    auth?: boolean;\n    title?: string;\n    isMenu?: boolean;\n    icon?: string;\n    target?: 'device' | 'cloud' | 'universal';\n  };\n}\n\nexport const routes: CustomRouteObject[] = process.env.BUILD_TARGET === 'cloud' ? [\n${routeEntries.cloud.join(',\n')}\n] : [\n${routeEntries.device.join(',\n')}\n];\n`;
 
   try {
+    if (fs.existsSync(outPath) && fs.readFileSync(outPath, 'utf-8') === fileContent) {
+      return;
+    }
     fs.writeFileSync(outPath, fileContent, 'utf-8');
     console.log('✅ routeConfig.ts generated successfully');
   } catch (err) {

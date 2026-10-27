@@ -835,7 +835,8 @@ const XtermTerminal: FC<XtermTerminalProps> = props => {
         <div className="h-[calc(100%-36px)] min-w-0 overflow-hidden">
           <div
             ref={ref}
-            className="h-full w-full box-border overflow-hidden py-1 pl-2 pr-1 sm:p-0"
+            translate="no"
+            className="notranslate h-full w-full box-border overflow-hidden py-1 pl-2 pr-1 sm:p-0"
             onClick={focusTerminal}
             onFocus={() => scrollTerminalInputIntoView('smooth')}
           />

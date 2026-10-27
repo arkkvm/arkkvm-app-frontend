@@ -85,7 +85,7 @@ function Row({
   return (
     <div className="flex items-center justify-between text-sm border-border border-b-[0.02px] py-[12px]">
       <span className="text-inactive-text ">{label}</span>
-      <span className="ml-[10px] text-text font-medium">
+      <span translate="no" className="notranslate ml-[10px] text-text font-medium">
         {value}
       </span>
     </div>

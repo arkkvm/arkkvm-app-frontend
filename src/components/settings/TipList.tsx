@@ -36,8 +36,8 @@ export const TipList = ({
         <li className="mb-[10px]">{t(titleKey)||'Tips:'}</li>
         {listItems.map((item: string, index: number) => (
           <li key={index} className={index === 0  ? 'mb-[6px]' : ''}>
-            {numbered ? `${index + 1}.` : ''}
-            {item}
+            <span>{numbered ? `${index + 1}.` : ''}</span>
+            <span>{item}</span>
           </li>
         ))}
       </ul>

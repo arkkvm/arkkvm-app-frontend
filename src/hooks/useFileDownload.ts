@@ -9,6 +9,7 @@
  * - Encapsulate existing useWebRtcFile to avoid direct dependencies everywhere
  */
 
+import { createLogger } from '@/utils/logger';
 import { useJsonRpc } from '@/hooks/useJsonRpc';
 import { useRTCStore } from '@/stores';
 import { buildRequestHeaders } from '@/api/request';
@@ -18,6 +19,8 @@ import { env } from '@/utils/env';
 import type { TransferSnapshot } from '@/utils/transfer';
 import { calculateTransferStats } from '@/utils/transfer';
 import { useCallback, useRef } from 'react';
+
+const logger = createLogger('FileDownload');
 
 /**
  * Download stall timeout: base 60s + 1s per MB, capped at 10 minutes.
@@ -535,7 +538,7 @@ export function useFileDownload(opts: UseFileDownloadOptions = {}) {
         try {
           channel.close();
         } catch (err) {
-          console.warn('Close channel error:', err);
+          logger.warn('Close channel error:', err);
         }
       }
 

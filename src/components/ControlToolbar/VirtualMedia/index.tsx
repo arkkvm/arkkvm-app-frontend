@@ -424,125 +424,129 @@ const VirtualMedia: React.FC<VirtualMediaProps> = ({
         </ActionPanel>
       )}
       {/* Dialog 1: Source selection */}
-      <Dialog
-        title={t('virtualMedia:sourceDialog.title')}
-        description={t('virtualMedia:sourceDialog.description')}
-        confirmText={t('virtualMedia:sourceDialog.continueButton')}
-        cancelText={t('virtualMedia:sourceDialog.cancelButton')}
-        contentClassName="z-[200]"
-        width="500px"
-        open={selectMediaOpen}
-        onOpenChange={setSelectMediaOpen}
-        onCancel={() => setSelectMediaOpen(false)}
-        onConfirm={() => {
-          if (value === 'url') {
-            setSelectMediaOpen(false);
-            setUrlDialogOpen(true);
-            setPresetViewMode('list');
-            void fetchVirtualMediaList();
-          }
-          if (value === 'storage') {
-            setSelectMediaOpen(false);
-            setStorageDialogOpen(true);
-          }
-          // TODO: storage flow -> open another dialog when ready
-        }}
-      >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {sourceOptions.map(opt => (
-            <SelectVirtualMediaCard
-              className="flex-1"
-              key={opt.value}
-              name="mountType"
-              value={opt.value}
-              checked={value === opt.value}
-              onChange={v => setValue(v as typeof value)}
-              icon={opt.icon}
-              badgeText={opt.badgeTextKey ? t(opt.badgeTextKey) : undefined}
-              badgeVariant={opt.badgeVariant}
-              title={opt.titleKey ? t(opt.titleKey) : ''}
-              description={opt.descriptionKey ? t(opt.descriptionKey) : ''}
-              disabled={opt.disabled}
-            />
-          ))}
-        </div>
-      </Dialog>
+      {selectMediaOpen && (
+        <Dialog
+          title={t('virtualMedia:sourceDialog.title')}
+          description={t('virtualMedia:sourceDialog.description')}
+          confirmText={t('virtualMedia:sourceDialog.continueButton')}
+          cancelText={t('virtualMedia:sourceDialog.cancelButton')}
+          contentClassName="z-[200]"
+          width="500px"
+          open={selectMediaOpen}
+          onOpenChange={setSelectMediaOpen}
+          onCancel={() => setSelectMediaOpen(false)}
+          onConfirm={() => {
+            if (value === 'url') {
+              setSelectMediaOpen(false);
+              setUrlDialogOpen(true);
+              setPresetViewMode('list');
+              void fetchVirtualMediaList();
+            }
+            if (value === 'storage') {
+              setSelectMediaOpen(false);
+              setStorageDialogOpen(true);
+            }
+            // TODO: storage flow -> open another dialog when ready
+          }}
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {sourceOptions.map(opt => (
+              <SelectVirtualMediaCard
+                className="flex-1"
+                key={opt.value}
+                name="mountType"
+                value={opt.value}
+                checked={value === opt.value}
+                onChange={v => setValue(v as typeof value)}
+                icon={opt.icon}
+                badgeText={opt.badgeTextKey ? t(opt.badgeTextKey) : undefined}
+                badgeVariant={opt.badgeVariant}
+                title={opt.titleKey ? t(opt.titleKey) : ''}
+                description={opt.descriptionKey ? t(opt.descriptionKey) : ''}
+                disabled={opt.disabled}
+              />
+            ))}
+          </div>
+        </Dialog>
+      )}
 
       {/* Dialog 2: URL mount (custom footer with Add & Back) */}
-      <Dialog
-        confirmText={t('mountUrlButton')}
-        cancelText={t('backButton')}
-        title={t('urlDialogTitle')}
-        description={t('urlDialogDesc')}
-        headerSlot={presetViewMode === 'list' ? undefined : <></>}
-        contentClassName="z-[200] pb-0"
-        width="600px"
-        open={urlDialogOpen}
-        onOpenChange={setUrlDialogOpen}
-        footerSlot={
-          presetViewMode === 'list' ? (
-            <div className="flex items-center justify-between gap-2 pb-(--spacing-base)">
-              <Button
-                variant="primary"
-                onClick={() => setPresetViewMode('create')}
-                disabled={popularImages.length >= MAX_ITEMS}
-              >
-                <Plus className="size-4" />
-                {t('urlMount.addButton')}
-              </Button>
-              <Button
-                onClick={() => {
-                  setUrlDialogOpen(false);
-                  setSelectMediaOpen(true);
-                }}
-              >
-                {t('backButton')}
-              </Button>
-            </div>
-          ) : (
-            <></>
-          )
-        }
-      >
-        <UrlMountPanel
-          items={popularImages}
-          presetViewMode={presetViewMode}
-          onPresetViewModeChange={setPresetViewMode}
-          defaultMountAs={'CDROM' as MountAs}
-          onBack={() => {
-            setUrlDialogOpen(false);
-            setSelectMediaOpen(true);
-          }}
-          onSubmitMount={handleSelectMedia}
-          submitting={isLoading('mountUrl')}
-          onSelect={url => {
-            logger.info('URL selected', { url });
-          }}
-          onAddImage={(item: PopularImageItem) => {
-            const nextList = [
-              ...popularImages.map(popularImageToVirtualMedia),
-              popularImageToVirtualMedia(item),
-            ];
-            void handleUpdateVirtualMediaList(nextList);
-          }}
-          onEditImage={(oldItem: PopularImageItem, newItem: PopularImageItem) => {
-            const storedItem = {
-              name: newItem.name,
-              url: newItem.url,
-              iconKey: newItem.iconKey,
-            };
-            const existingIndex = customImages.findIndex(img => img.name === oldItem.name);
-            const updated =
-              existingIndex >= 0
-                ? customImages.map((img, i) => (i === existingIndex ? storedItem : img))
-                : [...customImages, storedItem];
-            void handleUpdateVirtualMediaList(updated);
-          }}
-          onDeleteImage={(item: PopularImageItem) =>
-            handleRemoveVirtualMediaItem({ name: item.name, url: item.url, iconKey: item.iconKey })
+      {urlDialogOpen && (
+        <Dialog
+          confirmText={t('mountUrlButton')}
+          cancelText={t('backButton')}
+          title={t('urlDialogTitle')}
+          description={t('urlDialogDesc')}
+          headerSlot={presetViewMode === 'list' ? undefined : <></>}
+          contentClassName="z-[200] pb-0"
+          width="600px"
+          open={urlDialogOpen}
+          onOpenChange={setUrlDialogOpen}
+          footerSlot={
+            presetViewMode === 'list' ? (
+              <div className="flex items-center justify-between gap-2 pb-(--spacing-base)">
+                <Button
+                  variant="primary"
+                  onClick={() => setPresetViewMode('create')}
+                  disabled={popularImages.length >= MAX_ITEMS}
+                >
+                  <Plus className="size-4" />
+                  {t('urlMount.addButton')}
+                </Button>
+                <Button
+                  onClick={() => {
+                    setUrlDialogOpen(false);
+                    setSelectMediaOpen(true);
+                  }}
+                >
+                  {t('backButton')}
+                </Button>
+              </div>
+            ) : (
+              <></>
+            )
           }
-        />
-      </Dialog>
+        >
+          <UrlMountPanel
+            items={popularImages}
+            presetViewMode={presetViewMode}
+            onPresetViewModeChange={setPresetViewMode}
+            defaultMountAs={'CDROM' as MountAs}
+            onBack={() => {
+              setUrlDialogOpen(false);
+              setSelectMediaOpen(true);
+            }}
+            onSubmitMount={handleSelectMedia}
+            submitting={isLoading('mountUrl')}
+            onSelect={url => {
+              logger.info('URL selected', { url });
+            }}
+            onAddImage={(item: PopularImageItem) => {
+              const nextList = [
+                ...popularImages.map(popularImageToVirtualMedia),
+                popularImageToVirtualMedia(item),
+              ];
+              void handleUpdateVirtualMediaList(nextList);
+            }}
+            onEditImage={(oldItem: PopularImageItem, newItem: PopularImageItem) => {
+              const storedItem = {
+                name: newItem.name,
+                url: newItem.url,
+                iconKey: newItem.iconKey,
+              };
+              const existingIndex = customImages.findIndex(img => img.name === oldItem.name);
+              const updated =
+                existingIndex >= 0
+                  ? customImages.map((img, i) => (i === existingIndex ? storedItem : img))
+                  : [...customImages, storedItem];
+              void handleUpdateVirtualMediaList(updated);
+            }}
+            onDeleteImage={(item: PopularImageItem) =>
+              handleRemoveVirtualMediaItem({ name: item.name, url: item.url, iconKey: item.iconKey })
+            }
+          />
+        </Dialog>
+      )}
 
       {/* Dialog 3: Storage mount */}
       <StorageMountDialog

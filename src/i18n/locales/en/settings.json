@@ -360,6 +360,12 @@
       "1hour": "1 Hour"
     },
     "usb": {
+      "applied": "USB devices applied",
+      "fullSpeed": {
+        "title": "Legacy USB Compatibility",
+        "desc": "Limits USB to Full Speed for better compatibility with some older systems and BIOS environments. This may reduce USB transfer speeds.",
+        "warning": "Changing USB speed briefly disconnects USB devices."
+      },
       "title": "USB Devices",
       "desc": "Configure USB device emulation for the remote computer",
       "classes": {
@@ -573,6 +579,29 @@
     }
   },
   "advanced": {
+    "mcp": {
+      "title": "MCP",
+      "experimental": "Experimental",
+      "desc": "Allow MCP-compatible agents to control ArkKVM."
+    },
+    "forwarding": {
+      "saving": "Applying changes...",
+      "title": "Network Service Forwarding",
+      "desc": "Allows MCP agents to connect to network services on the target computer, such as SSH and web APIs.",
+      "warning": "Enabling Network Service Forwarding disables Relative Mouse and Microphone Emulation.",
+      "confirmTitle": "Enable Network Service Forwarding?",
+      "confirmDescription": [
+        "Network Service Forwarding allows AI agents to connect to network services on the target computer, such as SSH and web APIs, through ArkKVM.",
+        "This feature requires ArkKVM to emulate a USB network adapter (NIC). Due to USB device limits, enabling Network Service Forwarding will disable <strong>Relative Mouse</strong> and <strong>Microphone Emulation</strong>.",
+        "To use these features again, turn off Network Service Forwarding and re-enable them."
+      ],
+      "enable": "Enable",
+      "cancel": "Cancel",
+      "ok": "OK",
+      "blocked": "Network Service Forwarding is enabled. Turn it off before changing this setting.",
+      "unavailable": "Unable to verify MCP and Network Service Forwarding settings. Reopen this page to try again.",
+      "usbUnavailable": "Unable to verify USB settings. Reopen this page to try again."
+    },
     "webTerminal": {
       "title": "Web Terminal",
       "desc": "Enable shell access via the web interface"
@@ -696,9 +725,11 @@
       "title": "Cloud Provider",
       "desc": "Choose the cloud service used for remote access",
       "arkkvm": "ArkKVM Cloud",
+      "arkkvmChina": "ArkKVM Cloud China",
       "custom": "Custom"
     },
     "cloudSecurity": {
+      "chinaNotice": "Use <strong>ArkKVM Cloud China</strong> for ArkKVM devices deployed in Mainland China.",
       "title": "Cloud Security",
       "feature1": "End-to-end encryption via WebRTC (DTLS and SRTP)",
       "feature2": "Zero Trust security model",

@@ -16,7 +16,7 @@ const args = process.argv.slice(2)
 const envName = (args[0] || 'pro').trim()
 
 const envFilePath = path.join(root, `.env.${envName}`)
-const distDir = path.join(root, 'dist')
+const distDir = process.env.ARKKVM_DIST_ROOT || path.join(root, 'dist')
 
 // Read version from .env file
 function readVersionFromEnv(filePath: string): string {

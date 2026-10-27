@@ -7,7 +7,7 @@
 import NotFound from '@/pages/404.page';
 import { env } from '@/utils/env';
 import { Suspense } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import RouteAuth from './RouteAuth';
 import { CustomRouteObject, routes } from './routeConfig';
 const LoadingComponent = () => <div className="route-loading">Loading...</div>;
@@ -30,9 +30,13 @@ const renderRoutes = (routes: CustomRouteObject[]) => {
     );
   });
 };
-const RouterProvider = () => {
+const AppRoutes = () => {
+  const location = useLocation();
+  // Older firmware joins an app URL ending in '/' with '/login'.
+  if (env.target === 'cloud' && /^\/{2,}login\/?$/.test(location.pathname)) {
+    return <Navigate to={{ pathname: '/login', search: location.search, hash: location.hash }} replace />;
+  }
   return (
-    <BrowserRouter>
       <Routes>
         <Route element={<RouteAuth />}>
           {renderRoutes(routes)}
@@ -44,8 +48,12 @@ const RouterProvider = () => {
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
-    </BrowserRouter>
   );
 };
+const RouterProvider = () => (
+  <BrowserRouter>
+    <AppRoutes />
+  </BrowserRouter>
+);
 
 export default RouterProvider;

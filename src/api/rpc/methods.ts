@@ -1,3 +1,4 @@
+import type { ControlState } from './control';
 import type { GetVlanSettingsResponse } from './network';
 import type {
   AddVirtualMediaItemParams,
@@ -21,6 +22,25 @@ export interface StorageFileInfo {
 export interface ListStorageFilesResponse {
   files: StorageFileInfo[];
 }
+
+export type StorageCategoryId = 'system' | 'logs' | 'images' | 'targetOs' | 'userFiles';
+
+export interface StorageDetailsCategory<T extends StorageCategoryId = StorageCategoryId> {
+  id: T;
+  label: string;
+  bytesUsed: number;
+  clearable: boolean;
+}
+
+export interface StorageDetailsResponse<T extends StorageCategoryId = StorageCategoryId> {
+  bytesTotal: number;
+  bytesUsed: number;
+  bytesFree: number;
+  categories: StorageDetailsCategory<T>[];
+}
+
+export type ArkKvmStorageDetailsResponse = StorageDetailsResponse<'system' | 'logs' | 'images'>;
+export type FtStorageDetailsResponse = StorageDetailsResponse<'targetOs' | 'userFiles'>;
 
 export interface LocalFileInfo {
   name: string;
@@ -72,6 +92,15 @@ export interface JigglerConfig {
 }
 
 export interface MethodParamsMap {
+  getMcpEnabled: void;
+  setMcpEnabled: { enabled: boolean };
+  getSshForwarding: void;
+  setSshForwarding: { enabled: boolean };
+  getUsbFullSpeed: void;
+  setUsbFullSpeed: { enabled: boolean };
+  takeOverControl: void;
+  grantControl: { requestId: string };
+  denyControl: { requestId: string };
   setAudioQuality: { factor: number };
   setAudioPlayback: { enabled: boolean };
   keyboardReport: { keys: number[]; modifier: number };
@@ -143,6 +172,9 @@ export interface MethodParamsMap {
   removeVirtualMediaItem: RemoveVirtualMediaItemParams;
   updateVirtualMediaList: UpdateVirtualMediaListParams;
   getStorageSpace: void;
+  getStorageDetails: void;
+  clearStorageLogs: void;
+  clearStorageImages: void;
   mountWithHTTP: { url: string; mode: string };
   mountWithWebRTC: { filename: string; size: number; mode: string };
   mountWithStorage: { filename: string; mode: string };
@@ -185,9 +217,20 @@ export interface MethodParamsMap {
   startLocalFileDownload: { path: string; offset?: number };
   deleteCollectedEvidence: { path: string };
   startFtFsDownload: { path: string; name: string };
+  getFtStorageDetails: void;
+  clearFtUserFiles: void;
 }
 export type MethodName = keyof MethodParamsMap;
 export interface MethodResultMap extends Record<MethodName, unknown> {
+  getMcpEnabled: boolean;
+  setMcpEnabled: null;
+  setSshForwarding: null;
+  getUsbFullSpeed: boolean;
+  setUsbFullSpeed: null;
+  getSshForwarding: boolean;
+  takeOverControl: ControlState;
+  grantControl: ControlState;
+  denyControl: ControlState;
   getCloudState: CloudStateResponse;
   getDeviceID: string;
   getTLSState: TLSStateResponse;
@@ -205,6 +248,9 @@ export interface MethodResultMap extends Record<MethodName, unknown> {
   removeVirtualMediaItem: null;
   updateVirtualMediaList: null;
   getStorageSpace: unknown; // TODO: add proper type
+  getStorageDetails: ArkKvmStorageDetailsResponse;
+  clearStorageLogs: null;
+  clearStorageImages: null;
   listStorageFiles: ListStorageFilesResponse;
   deleteStorageFile: null;
   startStorageFileUpload: StartStorageFileUploadResponse | null;
@@ -213,8 +259,19 @@ export interface MethodResultMap extends Record<MethodName, unknown> {
   startLocalFileDownload: StartLocalFileDownloadResult;
   deleteCollectedEvidence: null;
   startFtFsDownload: { dataChannel: string };
+  getFtStorageDetails: FtStorageDetailsResponse;
+  clearFtUserFiles: null;
   setLocalLoopbackOnly: boolean;
   setSSHKeyState: null;
   getSSHKeyState: boolean;
   getDevModeState: { enabled: boolean };
 }
+
+export const SETTINGS_RPC_METHODS = {
+  getMcpEnabled: 'getMcpEnabled',
+  setMcpEnabled: 'setMcpEnabled',
+  getSshForwarding: 'getSshForwarding',
+  setSshForwarding: 'setSshForwarding',
+  getUsbFullSpeed: 'getUsbFullSpeed',
+  setUsbFullSpeed: 'setUsbFullSpeed',
+} as const satisfies Record<string, MethodName>;

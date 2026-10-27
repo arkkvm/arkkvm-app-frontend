@@ -52,6 +52,13 @@ export const DEFAULT_HIGH_WATER_MARK = 1 * 1024 * 1024;
 /** Per-chunk data size (4KB) */
 export const CHUNK_SIZE = 4 * 1024;
 
+/**
+ * HTTP POST slice size for device uploads (32MiB).
+ * Intentionally separate from WebRTC CHUNK_SIZE (4KB): each HTTP request is one
+ * durable slice that is finalized (fsync) before the client advances its ack.
+ */
+export const HTTP_CHUNK_SIZE = 32 * 1024 * 1024;
+
 /** Maximum chunks sent per macrotask */
 export const CHUNKS_PER_TICK = 8;
 

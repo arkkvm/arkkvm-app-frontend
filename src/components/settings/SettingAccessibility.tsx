@@ -5,18 +5,19 @@ import { Loading, SettingLocalAuth } from '@/components';
 import { useJsonRpc } from '@/hooks/useJsonRpc';
 import { useLoadingMap } from '@/hooks/useLoading';
 import { useRestartDialog } from '@/hooks/useRestartDialog';
-import { useSettingsActions } from '@/stores/devicesStore';
-import { env } from '@/utils/env';
+import { useActiveDeviceSettings, useSettingsActions } from '@/stores/devicesStore';
+import { cloudRegions, findCloudRegion, env } from '@/utils/env';
 import { createLogger } from '@/utils/logger';
-import { normalizeCloudOrigin } from '@/utils/security';
+import { getSafeExternalUrl, normalizeCloudOrigin, normalizeDeviceId } from '@/utils/security';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { CopyButton } from '../ui/copy-button';
 import { Input } from '../ui/input';
 import { Select, SelectSeparator } from '../ui/select';
+import type { AppSelectOption } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Textarea } from '../ui/textarea';
 import SettingBlock from './SettingBlock';
@@ -44,7 +45,11 @@ export default function SettingAccessibility() {
   const [tlsMode, setTlsMode] = useState<TLSMode>('disabled');
   const [tlsCert, setTlsCert] = useState<string>('');
   const [tlsKey, setTlsKey] = useState<string>('');
-  const [selectedProvider, setSelectedProvider] = useState<string>('arkkvm');
+  // Provider options fold the cloud region in: `arkkvm-<regionId>` selects
+  // an official region endpoint, `custom` keeps the manual URL inputs.
+  const [selectedProvider, setSelectedProvider] = useState<string>(
+    cloudRegions[0] ? `arkkvm-${cloudRegions[0].id}` : 'custom'
+  );
   const [loading, setLoading] = useState(false);
   const [localAuth, setLocalAuth] = useState(false);
   const [localAuthAction, setLocalAuthAction] = useState<
@@ -67,6 +72,12 @@ export default function SettingAccessibility() {
 
   const { showRestartDialog } = useRestartDialog();
   const { setNestedDeviceSetting } = useSettingsActions();
+  // Firmware version travels with the adoption jump as a capability
+  // statement: this webapp ships inside the firmware image, so a cloud
+  // login page seeing `fw` knows the device can pair with any provider
+  // (doc auth-analysis/05 §2.4). Legacy webapps send nothing -> Google only.
+  const firmwareVersion = useActiveDeviceSettings(s => s.appVersion);
+  const systemVersion = useActiveDeviceSettings(s => s.systemVersion);
   const navigate = useNavigate();
   const { isLoading, start, stop } = useLoadingMap([
     'switchTailscale',
@@ -93,14 +104,19 @@ export default function SettingAccessibility() {
           setAdopted(cloudState.connected);
           setCloudApiUrl(cloudState.url);
           setCloudAppUrl(cloudState.appUrl);
-          if (
-            (cloudState.url === env.officialCloudApiUrl &&
-              cloudState.appUrl === env.officialCloudAppUrl) ||
-            !cloudState.connected
-          ) {
-            setSelectedProvider('arkkvm');
-          } else {
+          // Official = any built-in region endpoint (Global/China); anything
+          // else is custom.
+          const matchedRegion = findCloudRegion(cloudState.url, cloudState.appUrl);
+          if (matchedRegion) {
+            setSelectedProvider(`arkkvm-${matchedRegion.id}`);
+          } else if (cloudState.connected) {
             setSelectedProvider('custom');
+          } else if (cloudRegions[0]) {
+            // Disconnected: prefill the first configured region so the
+            // Connect button targets the endpoint shown in the select.
+            setSelectedProvider(`arkkvm-${cloudRegions[0].id}`);
+            setCloudApiUrl(cloudRegions[0].apiUrl);
+            setCloudAppUrl(cloudRegions[0].appUrl);
           }
         }
       } catch (error) {
@@ -174,9 +190,17 @@ export default function SettingAccessibility() {
 
   const handleProviderChange = (value: string) => {
     setSelectedProvider(value);
-    if (value === 'arkkvm') {
-      setCloudApiUrl(env.officialCloudApiUrl);
-      setCloudAppUrl(env.officialCloudAppUrl);
+    if (value.startsWith('arkkvm-')) {
+      // Fill in the endpoints of the selected region (fall back to the first
+      // configured region when the saved one is no longer available).
+      const region = cloudRegions.find(item => `arkkvm-${item.id}` === value) ?? cloudRegions[0];
+      if (region) {
+        setCloudApiUrl(region.apiUrl);
+        setCloudAppUrl(region.appUrl);
+      } else {
+        setCloudApiUrl(env.officialCloudApiUrl);
+        setCloudAppUrl(env.officialCloudAppUrl);
+      }
       setCloudApiUrlError('');
       setCloudAppUrlError('');
     } else {
@@ -187,6 +211,20 @@ export default function SettingAccessibility() {
       setCloudAppUrlError('');
     }
   };
+
+  const cloudProviderOptions: AppSelectOption[] = [
+    ...cloudRegions.map(region => ({
+      value: `arkkvm-${region.id}`,
+      label:
+        region.id === 'global'
+          ? t('settings:accessibility.cloudProvider.arkkvm')
+          : t('settings:accessibility.cloudProvider.arkkvmChina'),
+    })),
+    {
+      value: 'custom',
+      label: t('settings:accessibility.cloudProvider.custom'),
+    },
+  ];
 
   const validateCloudUrl = (url: string, type: 'api' | 'app'): string => {
     if (!url) return '';
@@ -223,20 +261,23 @@ export default function SettingAccessibility() {
   };
   const onCloudAdoptClick = useCallback(
     (cloudApiUrl: string, cloudAppUrl: string) => {
-      if (!deviceId) {
+      const safeDeviceId = normalizeDeviceId(deviceId);
+      if (!safeDeviceId) {
         toast.error('No device ID available');
         return;
       }
       setLoading(true);
       const safeAppOrigin = normalizeCloudOrigin(cloudAppUrl);
-      if (!safeAppOrigin) {
+      const safeApiOrigin = normalizeCloudOrigin(cloudApiUrl);
+      const returnOrigin = normalizeCloudOrigin(window.location.origin);
+      if (!safeAppOrigin || !safeApiOrigin || !returnOrigin) {
         toast.error('Invalid cloud app URL');
         setLoading(false);
         return;
       }
       send({
         method: 'setCloudUrl',
-        params: { apiUrl: cloudApiUrl, appUrl: cloudAppUrl },
+        params: { apiUrl: safeApiOrigin, appUrl: safeAppOrigin },
         onResponse: resp => {
           setLoading(false);
           if ('error' in resp) {
@@ -244,19 +285,18 @@ export default function SettingAccessibility() {
             return;
           }
 
-          const returnTo = new URL(window.location.href);
-          returnTo.pathname = '/ad-login';
-          returnTo.search = '';
-          returnTo.hash = '';
-          window.location.href =
-            safeAppOrigin +
-            '/login?deviceId=' +
-            deviceId +
-            `&returnTo=${returnTo.toString()}&cloudApiUrl=${cloudApiUrl}`;
+          const params = new URLSearchParams({
+            deviceId: safeDeviceId,
+            returnTo: `${returnOrigin}/ad-login`,
+            cloudApiUrl: safeApiOrigin,
+            ...(systemVersion ? { systemVersion } : {}),
+            ...(firmwareVersion ? { fw: firmwareVersion } : {}),
+          });
+          window.location.href = `${safeAppOrigin}/login?${params}`;
         },
       });
     },
-    [deviceId, send]
+    [deviceId, firmwareVersion, systemVersion, send]
   );
   const deregisterDevice = () => {
     setDeregisterLoading(true);
@@ -370,8 +410,9 @@ export default function SettingAccessibility() {
   );
 
   const openTailscaleLogin = useCallback(() => {
-    if (tailscaleLoginUrl) {
-      window.open(tailscaleLoginUrl, '_blank');
+    const safeUrl = getSafeExternalUrl(tailscaleLoginUrl);
+    if (safeUrl) {
+      window.open(safeUrl, '_blank', 'noopener,noreferrer');
     }
   }, [tailscaleLoginUrl]);
 
@@ -386,11 +427,11 @@ export default function SettingAccessibility() {
       stop('registerTailscale');
       setTailscaleStatus('loggedOut');
       if (!resp.success) return;
-      const authUrl = resp.result.authUrl || resp.result.auth_url;
+      const authUrl = getSafeExternalUrl(resp.result.authUrl || resp.result.auth_url);
 
       if (authUrl) {
         setTailscaleLoginUrl(authUrl);
-        window.open(authUrl, '_blank');
+        window.open(authUrl, '_blank', 'noopener,noreferrer');
         toast.success('New login link generated');
       } else {
         fetchTailscaleState();
@@ -587,48 +628,40 @@ export default function SettingAccessibility() {
                   'settings:hardware.displayBrightness.placeholder',
                   'Select brightness'
                 )}
-                options={[
-                  {
-                    value: 'arkkvm',
-                    label: t('settings:accessibility.cloudProvider.arkkvm'),
-                  },
-                  {
-                    value: 'custom',
-                    label: t('settings:accessibility.cloudProvider.custom'),
-                  },
-                ]}
+                options={cloudProviderOptions}
                 disabled={!isChannelReady || isAdopted}
               />
             </SettingBlock.Right>
             <SettingBlock.Bottom className="pl-[24px]">
-              {selectedProvider === 'arkkvm' ? (
-                <div className="flex items-start gap-3 p-4 bg-secondary-background border border-(--border-color) rounded-lg mt-6">
-                  <div className="flex-shrink-0 w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center  ">
-                    <svg
-                      className="w-5 h-5 text-blue-600"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-sm font-medium text-text mb-2">
-                      {t('settings:accessibility.cloudSecurity.title')}
-                    </h3>
-                    <ul className="space-y-1 text-sm text-inactive-text">
-                      <li>• {t('settings:accessibility.cloudSecurity.feature1')}</li>
-                      <li>• {t('settings:accessibility.cloudSecurity.feature2')}</li>
-                      <li>• {t('settings:accessibility.cloudSecurity.feature3')}</li>
-                      <li>• {t('settings:accessibility.cloudSecurity.feature4')}</li>
-                    </ul>
-                    {/* <p className="text-sm text-inactive-text mt-3">
+              {selectedProvider.startsWith('arkkvm-') ? (
+                <>
+                  <div className="flex items-start gap-3 p-4 bg-secondary-background border border-(--border-color) rounded-lg mt-6">
+                    <div className="flex-shrink-0 w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center  ">
+                      <svg
+                        className="w-5 h-5 text-blue-600"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                        />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-sm font-medium text-text mb-2">
+                        {t('settings:accessibility.cloudSecurity.title')}
+                      </h3>
+                      <ul className="space-y-1 text-sm text-inactive-text">
+                        <li>• {t('settings:accessibility.cloudSecurity.feature1')}</li>
+                        <li>• {t('settings:accessibility.cloudSecurity.feature2')}</li>
+                        <li>• {t('settings:accessibility.cloudSecurity.feature3')}</li>
+                        <li>• {t('settings:accessibility.cloudSecurity.feature4')}</li>
+                      </ul>
+                      {/* <p className="text-sm text-inactive-text mt-3">
                         {t(
                           'settings:accessibility.cloudSecurity.openSourceText'
                         )}{' '}
@@ -645,8 +678,18 @@ export default function SettingAccessibility() {
                           'settings:accessibility.cloudSecurity.learnMoreButton'
                         )}
                       </button> */}
+                    </div>
                   </div>
-                </div>
+                  {selectedProvider === 'arkkvm-china' && (
+                    <p className="mt-3 text-sm text-text">
+                      <Trans
+                        ns="settings"
+                        i18nKey="accessibility.cloudSecurity.chinaNotice"
+                        components={{ strong: <strong /> }}
+                      />
+                    </p>
+                  )}
+                </>
               ) : (
                 <div className="text-text">
                   <Input

@@ -5,6 +5,7 @@
  * - **WebRTC DataChannel** (default): backpressure-controlled chunked transfer
  * - **HTTP POST** (device target with httpUploadUrl): XHR-based upload
  */
+import i18n from '@/i18n';
 import { useJsonRpc } from '@/hooks/useJsonRpc';
 import { useAppStore, useRTCStore } from '@/stores';
 import { env } from '@/utils/env';
@@ -322,10 +323,10 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
   }, [uploadState]);
 
   // ── HTTP Upload Handler (chunked) ─────────────────────────
-  // Each chunk: POST a 64MB slice as application/octet-stream.
+  // Each chunk: POST a 500 MiB slice as application/octet-stream.
   // Before the 2nd+ chunk, re-call RPC to get the server-confirmed offset.
   // 202 = chunk accepted, continue; 200 = upload complete.
-  const HTTP_CHUNK_SIZE = 500 * 1024 * 1024; // 500 MB — intentionally separate from WebRTC CHUNK_SIZE (4KB)
+  const HTTP_CHUNK_SIZE = 500 * 1024 * 1024; // Separate from WebRTC CHUNK_SIZE (4KB)
 
   const handleUploadHttp = useCallback(
     async (
@@ -341,6 +342,7 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
       let userAborted = false;
       httpAbortRef.current = false;
       let committedBytes = initialAlreadyUploadedBytes;
+      let httpConfirmedBytes: number | null = null;
       let prevSmoothedSpeedBps = 0;
 
       // Derive initial uploadId (will be refreshed per chunk via RPC)
@@ -409,7 +411,11 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
       });
 
       // Helper: POST one chunk and return {status, responseText}
-      const postChunk = (uploadId: string, blob: Blob, chunkOffset: number): Promise<{ status: number; responseText: string }> =>
+      const postChunk = (
+        uploadId: string,
+        blob: Blob,
+        chunkOffset: number
+      ): Promise<{ status: number; responseText: string }> =>
         new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           activeXhr = xhr;
@@ -448,17 +454,11 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
 
           xhr.onload = () => {
             const responseCsrfToken =
-              xhr.getResponseHeader('X-CSRF-Token') ||
-              xhr.getResponseHeader('x-csrf-token');
-            if (responseCsrfToken) {
+              xhr.getResponseHeader('X-CSRF-Token') || xhr.getResponseHeader('x-csrf-token');
+            if (responseCsrfToken && (env.target !== 'device' ||
+                (sessionStorage.getItem('csrfToken') ?? '') === csrfToken)) {
               sessionStorage.setItem('csrfToken', responseCsrfToken);
             }
-            logger.info('[Upload] chunk response', {
-              status: xhr.status,
-              chunkOffset,
-              chunkSize: blob.size,
-              uploadId,
-            });
             activeXhr = null;
             resolve({ status: xhr.status, responseText: xhr.responseText });
           };
@@ -481,6 +481,9 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
         });
 
       try {
+        if (!Number.isSafeInteger(committedBytes) || committedBytes < 0 || committedBytes >= file.size) {
+          throw new Error(i18n.t('common:uploadOffsetConflict'));
+        }
         currentUploadedRef.current = committedBytes;
 
         while (committedBytes < file.size) {
@@ -505,10 +508,7 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
 
             if (rpcResp.success === false) {
               const rpcErr = rpcResp.error;
-              const errMsg =
-                (rpcErr?.data as string) ||
-                rpcErr?.message ||
-                'Upload init failed';
+              const errMsg = (rpcErr?.data as string) || rpcErr?.message || 'Upload init failed';
               toast.error(errMsg);
               stopSpeedMeter();
               releaseUploadLock();
@@ -537,12 +537,21 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
             }
 
             const {
-              alreadyUploadedBytes: serverOffset = committedBytes,
+              alreadyUploadedBytes: serverOffset,
               dataChannel: chunkDataChannel = null,
             } = rpcResp.result || {};
+            const nextUploadId = resolveUploadId(chunkDataChannel);
+            // Reinitialization must agree with the last HTTP confirmation.
+            // Never guess which of two conflicting device offsets is correct.
+            if (typeof serverOffset !== 'number' || !Number.isSafeInteger(serverOffset) || serverOffset !== committedBytes) {
+              logger.error('[upload-diagnostic] conflicting-rpc-offset', {
+                serverOffset, committedBytes, nextUploadId, currentUploadId,
+              });
+              throw new Error(i18n.t('common:uploadOffsetConflict'));
+            }
             committedBytes = serverOffset;
             currentUploadedRef.current = committedBytes;
-            currentUploadId = resolveUploadId(chunkDataChannel);
+            currentUploadId = nextUploadId;
 
             if (committedBytes >= file.size) break;
           }
@@ -550,33 +559,73 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
           const chunkEnd = Math.min(committedBytes + HTTP_CHUNK_SIZE, file.size);
           const blob = file.slice(committedBytes, chunkEnd);
 
-          logger.info('Posting chunk', {
-            file: file.name,
-            chunkStart: committedBytes,
-            chunkEnd,
-            uploadId: currentUploadId,
-          });
 
           const { status, responseText } = await postChunk(currentUploadId, blob, committedBytes);
 
           if (userAborted || httpAbortRef.current) break;
 
           if (status === 200 || status === 202) {
-            // Advance offset: next chunk starts where this one ended
-            committedBytes = chunkEnd;
+            httpConfirmedBytes = null;
+            if (status === 202) {
+              // Device HTTP API: { message: "Upload partial: <written>/<size>" }.
+              // Parse only this documented confirmation, never arbitrary text.
+              let body: unknown;
+              try {
+                body = JSON.parse(responseText);
+              } catch {
+                throw new Error(i18n.t('common:uploadConfirmationInvalid'));
+              }
+              const message = body && typeof body === 'object' && 'message' in body
+                ? body.message : undefined;
+              const match = typeof message === 'string'
+                ? /^Upload partial:\s*(\d+)\/(\d+)$/.exec(message) : null;
+              if (match) {
+                const written = Number(match[1]);
+                const total = Number(match[2]);
+                if (Number.isSafeInteger(written) && total === file.size &&
+                    written > committedBytes && written <= chunkEnd && written < file.size) {
+                  httpConfirmedBytes = written;
+                }
+              }
+            }
+            if (status === 202 && httpConfirmedBytes === null) {
+              throw new Error(i18n.t('common:uploadConfirmationInvalid'));
+            }
+            if (status === 200 && chunkEnd !== file.size) {
+              throw new Error(i18n.t('common:uploadConfirmationInvalid'));
+            }
+            if (status === 200) committedBytes = file.size;
+            else if (httpConfirmedBytes !== null) committedBytes = httpConfirmedBytes;
             currentUploadedRef.current = committedBytes;
 
             const justSentAll = committedBytes >= file.size;
             if (justSentAll) {
               setUploadState('success');
               onSuccessRef.current?.(file);
-              try { unregisterUpload?.(file.name); } catch {}
-              try { removeUploadController?.(file.name); } catch {}
-              try { deleteUploadTask(file.name); } catch {}
+              try {
+                unregisterUpload?.(file.name);
+              } catch {}
+              try {
+                removeUploadController?.(file.name);
+              } catch {}
+              try {
+                deleteUploadTask(file.name);
+              } catch {}
               stopSpeedMeter();
               releaseUploadLock();
               const nextFile = dequeueNextFile();
-              if (nextFile) setTimeout(() => nextFile.onReady(nextFile.file, nextFile.channelLabel, nextFile.alreadyUploadedBytes, nextFile.dataChannel, nextFile.rpcParams), 100);
+              if (nextFile)
+                setTimeout(
+                  () =>
+                    nextFile.onReady(
+                      nextFile.file,
+                      nextFile.channelLabel,
+                      nextFile.alreadyUploadedBytes,
+                      nextFile.dataChannel,
+                      nextFile.rpcParams
+                    ),
+                  100
+                );
               return;
             }
             // Intermediate chunk accepted — continue with next slice
@@ -589,15 +638,35 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
               deviceBrief = body?.error?.brief || body?.errors?.[0]?.brief || '';
             } catch {}
             const reason = deviceBrief ? `${status} — ${deviceBrief}` : `HTTP ${status}`;
-            logger.error('[Upload] chunk POST failed', { status, responseText, file: file.name, committedBytes });
+            logger.error('[Upload] chunk POST failed', {
+              status,
+              responseText,
+              file: file.name,
+              committedBytes,
+            });
             toast.error(`Upload failed: ${reason}`);
             stopSpeedMeter();
             releaseUploadLock();
             setUploadState('failed');
-            try { removeUploadController?.(file.name); } catch {}
-            try { onErrorRef.current?.({ name: file.name, error: reason }); } catch {}
+            try {
+              removeUploadController?.(file.name);
+            } catch {}
+            try {
+              onErrorRef.current?.({ name: file.name, error: reason });
+            } catch {}
             const nextFail = dequeueNextFile();
-            if (nextFail) setTimeout(() => nextFail.onReady(nextFail.file, nextFail.channelLabel, nextFail.alreadyUploadedBytes, nextFail.dataChannel, nextFail.rpcParams), 1000);
+            if (nextFail)
+              setTimeout(
+                () =>
+                  nextFail.onReady(
+                    nextFail.file,
+                    nextFail.channelLabel,
+                    nextFail.alreadyUploadedBytes,
+                    nextFail.dataChannel,
+                    nextFail.rpcParams
+                  ),
+                1000
+              );
             return;
           }
         }
@@ -606,24 +675,46 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
         if (!userAborted && committedBytes >= file.size) {
           setUploadState('success');
           onSuccessRef.current?.(file);
-          try { unregisterUpload?.(file.name); } catch {}
-          try { removeUploadController?.(file.name); } catch {}
-          try { deleteUploadTask(file.name); } catch {}
+          try {
+            unregisterUpload?.(file.name);
+          } catch {}
+          try {
+            removeUploadController?.(file.name);
+          } catch {}
+          try {
+            deleteUploadTask(file.name);
+          } catch {}
           stopSpeedMeter();
           releaseUploadLock();
           const nextFile = dequeueNextFile();
-          if (nextFile) setTimeout(() => nextFile.onReady(nextFile.file, nextFile.channelLabel, nextFile.alreadyUploadedBytes, nextFile.dataChannel, nextFile.rpcParams), 100);
+          if (nextFile)
+            setTimeout(
+              () =>
+                nextFile.onReady(
+                  nextFile.file,
+                  nextFile.channelLabel,
+                  nextFile.alreadyUploadedBytes,
+                  nextFile.dataChannel,
+                  nextFile.rpcParams
+                ),
+              100
+            );
         }
       } catch (e: unknown) {
         if (userAborted) return;
+        currentUploadedRef.current = committedBytes;
         const reason = e instanceof Error ? e.message : 'Unknown error';
         logger.error('HTTP chunk upload error', { file: file.name, error: reason, committedBytes });
         toast.error(`Upload failed: ${reason}`);
         stopSpeedMeter();
         releaseUploadLock();
         setUploadState('failed');
-        try { removeUploadController?.(file.name); } catch {}
-        try { onErrorRef.current?.({ name: file.name, error: reason }); } catch {}
+        try {
+          removeUploadController?.(file.name);
+        } catch {}
+        try {
+          onErrorRef.current?.({ name: file.name, error: reason });
+        } catch {}
         try {
           updateUploadTask(file.name, {
             status: 'failed',
@@ -632,7 +723,18 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
           });
         } catch {}
         const nextErr = dequeueNextFile();
-        if (nextErr) setTimeout(() => nextErr.onReady(nextErr.file, nextErr.channelLabel, nextErr.alreadyUploadedBytes, nextErr.dataChannel, nextErr.rpcParams), 1000);
+        if (nextErr)
+          setTimeout(
+            () =>
+              nextErr.onReady(
+                nextErr.file,
+                nextErr.channelLabel,
+                nextErr.alreadyUploadedBytes,
+                nextErr.dataChannel,
+                nextErr.rpcParams
+              ),
+            1000
+          );
       }
     },
     [sendAsync, startMethod, stopSpeedMeter, httpUploadUrl]
@@ -1074,6 +1176,13 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
             e.data
           ) as { AlreadyUploadedBytes: number; Size: number };
 
+          if (
+            finishedRef.current ||
+            !Number.isSafeInteger(transferredBytes) ||
+            transferredBytes < lastAckBytesRef.current ||
+            transferredBytes > file.size
+          ) return;
+
           // Size mismatch: device disagrees on the file size — abort rather than
           // report a bogus completion. (Field names AlreadyUploadedBytes / Size
           // are the backend protocol and left unchanged.)
@@ -1430,11 +1539,6 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
         }
 
         let params = extra || { ...baseParams };
-        logger.info('Starting upload RPC', {
-          method: startMethod,
-          filename: file.name,
-          size: file.size,
-        });
 
         const startResp = await sendAsync(
           {
@@ -1452,8 +1556,7 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
           startingRef.current = false;
           return;
         }
-        const { alreadyUploadedBytes: uploadedBytes, dataChannel = null } =
-          startResp.result || {};
+        const { alreadyUploadedBytes: uploadedBytes, dataChannel = null } = startResp.result || {};
         const alreadyUploadedBytes = uploadedBytes ?? 0;
 
         // 2) No channel and not in HTTP mode -> reject
@@ -1528,7 +1631,12 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
           setTimeout(() => handleUploadStartRef.current?.(nextPending), 50);
         }
         if (env.target === 'device' && httpUploadUrl) {
-          await handleUploadHttp(file, alreadyUploadedBytes, dataChannel, params as Record<string, unknown>);
+          await handleUploadHttp(
+            file,
+            alreadyUploadedBytes,
+            dataChannel,
+            params as Record<string, unknown>
+          );
         } else {
           await handleUploadWebRTC(file, alreadyUploadedBytes, channelLabel);
         }
@@ -1634,9 +1742,7 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
         );
         if (startResp.success === false) {
           const errMsg =
-            (startResp.error?.data as string) ||
-            startResp.error?.message ||
-            'Upload resume failed';
+            (startResp.error?.data as string) || startResp.error?.message || 'Upload resume failed';
           throw new UploadResumeError('device-task-missing', errMsg);
         }
 
@@ -1657,10 +1763,7 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
           : null;
         const isHttpMode = env.target === 'device' && !!httpUploadUrl;
         if (!dataChannel && !isHttpMode) {
-          throw new UploadResumeError(
-            'unknown',
-            'No upload channel returned from device'
-          );
+          throw new UploadResumeError('unknown', 'No upload channel returned from device');
         }
 
         setFileName(file.name);
@@ -1691,21 +1794,12 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
         if (err instanceof UploadResumeError) {
           throw err;
         }
-        throw new UploadResumeError(
-          'unknown',
-          err instanceof Error ? err.message : String(err)
-        );
+        throw new UploadResumeError('unknown', err instanceof Error ? err.message : String(err));
       } finally {
         startingRef.current = false;
       }
     },
-    [
-      sendAsync,
-      startMethod,
-      startParams,
-      httpUploadUrl,
-      runPreUploadGuard,
-    ]
+    [sendAsync, startMethod, startParams, httpUploadUrl, runPreUploadGuard]
   );
 
   // ── Drag & Drop Handlers ───────────────────────────────────
@@ -1879,10 +1973,7 @@ export function useUpload(props: UploadDropZoneProps): UseUploadReturn {
           pickingRef.current = false;
           for (const handle of handles) {
             const file = await handle.getFile();
-            await handleUploadStart(
-              file,
-              handle as unknown as PersistedFileSystemFileHandle
-            );
+            await handleUploadStart(file, handle as unknown as PersistedFileSystemFileHandle);
           }
         } catch (e: unknown) {
           if (e instanceof DOMException && e.name === 'AbortError') {

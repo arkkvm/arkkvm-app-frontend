@@ -10,6 +10,7 @@
 import { Layout } from '@/components/Layout';
 import { useUserStore } from '@/stores';
 import { env } from '@/utils/env';
+import { getSafeRedirectUrl, normalizeDeviceId } from '@/utils/security';
 import { FC, ReactNode, useEffect } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
@@ -41,13 +42,18 @@ const RouteAuth: FC<{ children?: ReactNode }> = ({ children }) => {
       // Auth checks are only required in cloud mode
       if (!isCloudMode) return;
 
-      // If already logged in on /login, redirect unless opening a device-specific login flow
+      // If already logged in on /login, redirect unless opening a device-specific
+      // login flow or an MCP consent flow (client=mcp + req, migration/15 §3):
+      // the consent card must render for a signed-in user too, otherwise the
+      // local MCP tool's loopback callback never fires and its login times out.
       if (isLoggedIn && location.pathname === '/login') {
         const searchParams = new URLSearchParams(location.search);
-        const deviceId = searchParams.get('deviceId');
-        // Keep current page when deviceId exists; otherwise redirect to previous/default path
-        if (!deviceId) {
-          const previousPath = location.state?.from?.pathname || '/devices/list';
+        const deviceId = normalizeDeviceId(searchParams.get('deviceId'));
+        const mcpConsent = searchParams.get('client') === 'mcp' && Boolean(searchParams.get('req'));
+        // Keep current page when deviceId exists or an MCP consent flow is
+        // starting; otherwise redirect to previous/default path
+        if (!deviceId && !mcpConsent) {
+          const previousPath = getSafeRedirectUrl(location.state?.from?.pathname) || '/devices/list';
           navigate(previousPath, { replace: true });
         }
       }
@@ -59,6 +65,7 @@ const RouteAuth: FC<{ children?: ReactNode }> = ({ children }) => {
     userInfo,
     isLoggedIn,
     location.pathname,
+    location.search,
     navigate,
     loading,
     isCloudMode,

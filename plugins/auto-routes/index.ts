@@ -1,5 +1,4 @@
 import type { RsbuildPlugin } from '@rsbuild/core';
-import fs from 'fs';
 import path from 'path';
 
 // Import the core route generation logic
@@ -71,33 +70,8 @@ export const autoRoutesPlugin = (): RsbuildPlugin => ({
           return; // Stop subsequent logic on regeneration failure
         }
 
-        // Force route file reload
-        console.log('🔄 Triggering route file reload...');
-
-        // Update route file so Rsbuild can detect a file change
-        try {
-          const routeConfigFile = path.resolve(process.cwd(), 'src/router/routeConfig.ts');
-          if (fs.existsSync(routeConfigFile)) {
-            // Read current content
-            let content = fs.readFileSync(routeConfigFile, 'utf-8');
-
-            // Add or update timestamp comment to trigger HMR
-            const timestamp = `// Last updated: ${new Date().toISOString()}`;
-            if (content.includes('// Last updated:')) {
-              content = content.replace(/\/\/ Last updated: .*/, timestamp);
-            } else {
-              content = `${timestamp}\n${content}`;
-            }
-
-            // Write content back to file
-            fs.writeFileSync(routeConfigFile, content, 'utf-8');
-            console.log(`Route config file updated: ${routeConfigFile}`);
-          } else {
-            console.log('Route config file not found, reload trigger skipped');
-          }
-        } catch (err) {
-          console.error('Failed to trigger route reload:', err);
-        }
+        // The generator writes only when routes change; Rsbuild watches that
+        // change directly. Page-only edits already participate in normal HMR.
       }
     });
   }

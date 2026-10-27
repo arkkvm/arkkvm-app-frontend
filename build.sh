@@ -1,221 +1,135 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ArkKVM full build script.
-# Usage: ./build.sh [env] [version]
+# Release orchestration; run.sh and Rsbuild own target configuration.
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-log_info() {
-  printf "${GREEN}[INFO]${NC} %s\n" "$1"
-}
-
-log_warn() {
-  printf "${YELLOW}[WARN]${NC} %s\n" "$1"
-}
-
-log_error() {
-  printf "${RED}[ERROR]${NC} %s\n" "$1" >&2
-}
-
-log_step() {
-  printf "${BLUE}[STEP]${NC} %s\n" "$1"
-}
-
-check_node_version() {
-  if ! command -v node >/dev/null 2>&1; then
-    log_error "Node.js not found. Required version: 20.18.0 or newer."
-    exit 127
-  fi
-
-  if ! node -e "const [maj,min]=process.versions.node.split('.').map(Number); process.exit(maj > 20 || (maj === 20 && min >= 18) ? 0 : 1)"; then
-    log_error "Node.js 20.18.0 or newer is required. Current: $(node -v)"
-    exit 1
-  fi
-}
-
-run_tsx() {
-  if command -v tsx >/dev/null 2>&1; then
-    tsx "$@"
-  elif [ -x "./node_modules/.bin/tsx" ]; then
-    ./node_modules/.bin/tsx "$@"
-  else
-    log_error "tsx not found. Run pnpm install or make tsx available in PATH."
-    exit 127
-  fi
+fail() {
+  printf '[build.sh] ERROR: %s\n' "$1" >&2
+  exit 1
 }
 
 show_usage() {
   cat <<'EOF'
-ArkKVM Frontend Build Script
+Usage: ./build.sh [--version VERSION | --auto-version] [--target all|cloud|device] [--archive]
 
-Usage:
-  ./build.sh [env] [version]
-  ./build.sh [version]
+  --version VERSION  Use an exact version and create a versioned Cloud ZIP.
+  --auto-version     Generate a version using the existing .env.pro history.
+  --target TARGET    Build all (default), cloud, or device.
+  --archive          Also ZIP an unversioned Cloud build; never ZIP Device.
+  -h, --help         Show this help.
 
-Arguments:
-  env       pro | test (optional, default: pro)
-  version   Optional version. If omitted, a version is auto-generated.
-
-Examples:
-  ./build.sh
-  ./build.sh pro
-  ./build.sh test
-  ./build.sh 1.2.3
-  ./build.sh pro 1.2.3
-  ./build.sh test 0.2.26061893
-  ./build.sh pro 0.2.26061893
-  CLOUD_BUILD_MODE=flat ./build.sh pro 0.2.26061893
-
-Environment Variables:
-  CLOUD_BUILD_MODE  versioned | flat (optional, default: versioned)
-
-Build Flow:
-  1. Generate version with scripts/generate-version.ts
-  2. Build device target
-  3. Build cloud target
-  4. Write dist version files
-  5. Create dist/{version}.zip when zip is available
-
-Build Output:
-  dist/device/
-  dist/{version}/
-  dist/{version}.zip
-  dist/cloud/       (when CLOUD_BUILD_MODE=flat)
-  dist/cloud.zip    (when CLOUD_BUILD_MODE=flat)
-  dist/version
+Outputs:
+  Default:    dist/cloud/, dist/device/
+  Versioned:  dist/VERSION/, dist/VERSION.zip, dist/device/, dist/version
+  Only selected targets are replaced; other targets and versions are retained.
+  Cloud always uses runtime configuration. DEVICE_BUILD_ENV=pro|test selects
+  Device's existing configuration (default pro); it does not select a Cloud API.
 EOF
 }
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  show_usage
-  exit 0
-fi
-
-if [ "$#" -gt 2 ]; then
-  log_error "Too many arguments."
-  echo
-  show_usage
-  exit 1
-fi
-
-ENV="pro"
-VERSION_ARG=""
-if [ "${CLOUD_BUILD_MODE:-}" = "flat" ]; then
-  export CLOUD_BUILD_MODE="flat"
-else
-  export CLOUD_BUILD_MODE="versioned"
-fi
-
-if [ "$#" -eq 1 ]; then
+build_target=all
+release_version=''
+auto_version=0
+archive=0
+while [ "$#" -gt 0 ]; do
   case "$1" in
-    pro | test)
-      ENV="$1"
+    --version)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || fail '--version requires a value'
+      [ -z "$release_version" ] || fail 'Duplicate --version'
+      release_version="$2"
+      shift 2
       ;;
-    *)
-      VERSION_ARG="$1"
+    --auto-version)
+      [ "$auto_version" -eq 0 ] || fail 'Duplicate --auto-version'
+      auto_version=1
+      shift
       ;;
+    --target)
+      [ "$#" -ge 2 ] || fail '--target requires a value'
+      build_target="$2"
+      shift 2
+      ;;
+    --archive) archive=1; shift ;;
+    -h|--help) show_usage; exit 0 ;;
+    *) fail "Unknown argument: $1 (see --help)" ;;
   esac
-elif [ "$#" -eq 2 ]; then
-  ENV="$1"
-  VERSION_ARG="$2"
+done
 
-  case "$ENV" in
-    pro | test) ;;
-    *)
-      log_error "Invalid env: $ENV"
-      echo
-      show_usage
-      exit 1
-      ;;
-  esac
+case "$build_target" in all|cloud|device) ;; *) fail 'Invalid --target' ;; esac
+[ -z "$release_version" ] || [ "$auto_version" -eq 0 ] || fail '--version and --auto-version are mutually exclusive'
+device_env="${DEVICE_BUILD_ENV:-pro}"
+if [ "$build_target" != cloud ]; then
+  case "$device_env" in pro|test) ;; *) fail 'DEVICE_BUILD_ENV must be pro or test' ;; esac
 fi
 
-echo
-echo "======================================"
-log_info "ArkKVM Frontend Build"
-echo "======================================"
-log_info "Environment: $ENV"
-log_info "Cloud Build Mode: $CLOUD_BUILD_MODE"
-if [ -n "$VERSION_ARG" ]; then
-  log_info "Version: $VERSION_ARG"
-  export VERSION="$VERSION_ARG"
-else
-  log_info "Version: auto-generated"
-fi
-echo "======================================"
-echo
+validate_version() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || fail "Invalid version: $1"
+}
 
-check_node_version
-
-log_step "Generating version"
-run_tsx scripts/generate-version.ts "$ENV"
-
-log_step "Building device target"
-./run.sh build device "$ENV"
-
-log_step "Building cloud target"
-CLOUD_BUILD_MODE="$CLOUD_BUILD_MODE" ./run.sh build cloud "$ENV"
-
-log_step "Writing dist version files"
-run_tsx scripts/write-dist-version.ts "$ENV"
-
-if [ ! -f "dist/version" ]; then
-  log_error "Missing dist/version after build."
-  exit 1
+if [ -n "$release_version" ]; then validate_version "$release_version"; fi
+if [ -n "$release_version" ] || [ "$auto_version" -eq 1 ]; then
+  # Reuse the existing version generator, independently of Device's API config.
+  VERSION='' node --import tsx scripts/generate-version.ts pro "$release_version"
+  release_version="$(awk -F= '$1 == "RSB_APP_VERSION" { print $2 }' .env.pro)"
+  validate_version "$release_version"
 fi
 
-BUILT_VERSION="$(cat dist/version)"
-
-echo
-echo "======================================"
-log_info "Build successful"
-echo "======================================"
-log_info "Build Version: $BUILT_VERSION"
-log_info "Build Artifacts:"
-
-if [ -d "dist/device" ]; then
-  DEVICE_SIZE="$(du -sh dist/device | awk '{print $1}')"
-  printf '  - dist/device/ (%s)\n' "$DEVICE_SIZE"
-else
-  log_warn "Missing dist/device/"
+cloud_name="${release_version:-cloud}"
+if [ "$build_target" != device ] && { [ -n "$release_version" ] || [ "$archive" -eq 1 ]; }; then
+  command -v zip >/dev/null 2>&1 || fail 'zip is required for the requested Cloud archive'
+  archive=1
 fi
 
-if [ "$CLOUD_BUILD_MODE" = "flat" ]; then
-  cloud_dist="dist/cloud"
-  cloud_zip="dist/cloud.zip"
-  cloud_zip_name="cloud.zip"
-  cloud_zip_source="cloud"
-else
-  cloud_dist="dist/${BUILT_VERSION}"
-  cloud_zip="dist/${BUILT_VERSION}.zip"
-  cloud_zip_name="${BUILT_VERSION}.zip"
-  cloud_zip_source="$BUILT_VERSION"
+mkdir -p dist
+staging="$(mktemp -d "$PWD/dist/.build.XXXXXX")"
+trap 'rm -rf "$staging"' EXIT
+
+targets=()
+if [ "$build_target" != cloud ]; then targets+=(device); fi
+if [ "$build_target" != device ]; then targets+=("$cloud_name"); fi
+
+if [ "$build_target" != cloud ]; then
+  ARKKVM_OUTPUT_DIR="$staging/device" ARKKVM_BUILD_VERSION="$release_version" \
+    ./run.sh build device "$device_env"
+fi
+if [ "$build_target" != device ]; then
+  cloud_mode=flat
+  if [ -n "$release_version" ]; then cloud_mode=versioned; fi
+  ARKKVM_OUTPUT_DIR="$staging/$cloud_name" ARKKVM_BUILD_VERSION="$release_version" \
+    CLOUD_BUILD_MODE="$cloud_mode" ARKKVM_CLOUD_RUNTIME_ONLY=1 ./run.sh build cloud
 fi
 
-if [ -d "$cloud_dist" ]; then
-  CLOUD_SIZE="$(du -sh "$cloud_dist" | awk '{print $1}')"
-  printf '  - %s/ (%s)\n' "$cloud_dist" "$CLOUD_SIZE"
+for name in "${targets[@]}"; do
+  [ -s "$staging/$name/index.html" ] || fail "Missing $name/index.html"
+  [ -n "$(find "$staging/$name" -type f -name '*.js' -print -quit)" ] || fail "Missing $name JavaScript assets"
+done
 
-  if command -v zip >/dev/null 2>&1; then
-    log_step "Creating cloud archive"
-    if (cd dist && zip -rq "$cloud_zip_name" "$cloud_zip_source"); then
-      ZIP_SIZE="$(du -sh "$cloud_zip" | awk '{print $1}')"
-      printf '  - %s (%s)\n' "$cloud_zip" "$ZIP_SIZE"
-    else
-      log_warn "Failed to create $cloud_zip; continuing without archive."
-    fi
-  else
-    log_warn "'zip' command not found; skipping $cloud_zip."
+if [ -n "$release_version" ]; then
+  ARKKVM_DIST_ROOT="$staging" node --import tsx scripts/write-dist-version.ts pro
+  [ "$(cat "$staging/version")" = "$release_version" ] || fail 'Invalid dist version file'
+  for name in "${targets[@]}"; do
+    [ "$(cat "$staging/$name/version")" = "$release_version" ] || fail "Invalid $name/version"
+  done
+fi
+
+if [ "$archive" -eq 1 ] && [ "$build_target" != device ]; then
+  # Create a fresh ZIP in staging; never update an old archive in place.
+  (cd "$staging" && zip -rq "$cloud_name.zip" "$cloud_name")
+  [ -s "$staging/$cloud_name.zip" ] || fail 'Cloud archive is missing or empty'
+fi
+
+# Publish only after all builds, metadata checks and archive creation succeed.
+for name in "${targets[@]}"; do
+  if [ -e "dist/$name" ]; then mv "dist/$name" "$staging/previous-$name"; fi
+  if ! mv "$staging/$name" "dist/$name"; then
+    if [ -e "$staging/previous-$name" ]; then mv "$staging/previous-$name" "dist/$name"; fi
+    fail "Cannot publish $name"
   fi
-else
-  log_warn "Missing $cloud_dist/"
+  printf '[build.sh] Output: dist/%s/\n' "$name"
+done
+if [ -n "$release_version" ]; then mv "$staging/version" dist/version; fi
+if [ "$archive" -eq 1 ] && [ "$build_target" != device ]; then
+  mv "$staging/$cloud_name.zip" "dist/$cloud_name.zip"
+  printf '[build.sh] Archive: dist/%s.zip\n' "$cloud_name"
 fi
-
-printf '  - dist/version\n'
-echo "======================================"
-log_info "Build complete"

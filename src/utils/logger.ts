@@ -4,6 +4,7 @@
  */
 
 import { isDevelopment, isProduction } from './version';
+import { redactLog } from './redactLog';
 export enum LogLevel {
   DEBUG = 0,
   INFO = 1,
@@ -69,7 +70,7 @@ function createPrefix(level: LogLevel, moduleName?: string): string {
   parts.push(`[${levelNames[level]}]`);
 
   if (loggerConfig.enableModuleName && moduleName) {
-    parts.push(`[${moduleName}]`);
+    parts.push(`[${redactLog(moduleName)}]`);
   }
 
   return parts.join(' ');
@@ -101,6 +102,7 @@ function logWithLevel(
 
   const prefix = createPrefix(level, moduleName);
   const color = levelColors[level];
+  const payload = redactLog([message, ...args]) as unknown[];
 
   const consoleMethod =
     {
@@ -114,11 +116,10 @@ function logWithLevel(
     consoleMethod(
       `%c${prefix}`,
       `color: ${color}; font-weight: bold;`,
-      message,
-      ...args
+      ...payload
     );
   } else {
-    consoleMethod(prefix, message, ...args);
+    consoleMethod(prefix, ...payload);
   }
 }
 
@@ -141,7 +142,7 @@ export function createLogger(moduleName?: string) {
 
     group: (label: string) => {
       if (shouldLog(LogLevel.INFO)) {
-        console.group(`${createPrefix(LogLevel.INFO, moduleName)} ${label}`);
+        console.group(`${createPrefix(LogLevel.INFO, moduleName)} ${redactLog(label)}`);
       }
     },
 
@@ -153,19 +154,19 @@ export function createLogger(moduleName?: string) {
 
     table: (data: unknown) => {
       if (shouldLog(LogLevel.DEBUG)) {
-        console.table(data);
+        console.table(redactLog(data));
       }
     },
 
     time: (label: string) => {
       if (shouldLog(LogLevel.DEBUG)) {
-        console.time(`${moduleName ? `[${moduleName}] ` : ''}${label}`);
+        console.time(`${moduleName ? `[${redactLog(moduleName)}] ` : ''}${redactLog(label)}`);
       }
     },
 
     timeEnd: (label: string) => {
       if (shouldLog(LogLevel.DEBUG)) {
-        console.timeEnd(`${moduleName ? `[${moduleName}] ` : ''}${label}`);
+        console.timeEnd(`${moduleName ? `[${redactLog(moduleName)}] ` : ''}${redactLog(label)}`);
       }
     },
   };

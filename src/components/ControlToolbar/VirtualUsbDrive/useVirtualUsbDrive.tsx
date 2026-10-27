@@ -1,4 +1,5 @@
 import { generateTaskId, useFileDownload } from '@/hooks/useFileDownload';
+import type { FtStorageDetailsResponse } from '@/api/rpc/methods';
 import { useLoadingMap } from '@/hooks/useLoading';
 import { useAppStore } from '@/stores';
 import type { DownloadItem } from '@/stores/slices/fileTransferDownloadSlice';
@@ -13,15 +14,13 @@ import { useConfirmDialog } from '../../ui/confirm-dialog';
 import { Input } from '../../ui/input';
 import { removeFromQueue } from '../../Upload/uploadLock';
 import type { UploadDropZoneRef } from '../../Upload/UploadDropZone';
-import type {
-  DeleteResult,
-  Row,
-  StorageInfo,
-  VirtualUsbDriveProps,
-  VMState,
-} from './types';
+import type { DeleteResult, Row, StorageInfo, VirtualUsbDriveProps, VMState } from './types';
 import { filterTasksByFtcache, joinPath } from './utils';
-import { deleteUploadTask, UploadResumeError, type UploadResumeErrorCode } from '@/utils/uploadIndexedDb';
+import {
+  deleteUploadTask,
+  UploadResumeError,
+  type UploadResumeErrorCode,
+} from '@/utils/uploadIndexedDb';
 
 const logger = createLogger('VirtualUsbDrive');
 
@@ -32,9 +31,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getFileNameByKey = useAppStore((s: any) => s.getFileNameByKey);
   const uploadMap = useAppStore(s => s.fileTransferList.byId);
-  const uploads = Object.values(uploadMap).filter(
-    item => item.source === 'virtual-usb'
-  );
+  const uploads = Object.values(uploadMap).filter(item => item.source === 'virtual-usb');
   const { createRow, updateProgress, removeRow, setState } =
     useAppStore.getState().fileTransferList;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,9 +103,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     [removeRow, getUploadController, removeUploadController, getFileNameByKey]
   );
 
-  const [selectedCompletedRowKeys, setSelectedCompletedRowKeys] = useState<
-    React.Key[]
-  >([]);
+  const [selectedCompletedRowKeys, setSelectedCompletedRowKeys] = useState<React.Key[]>([]);
   const {
     is: isLoading,
     start: startLoading,
@@ -122,19 +117,17 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     'ftCreateDir',
     'ftListFile',
     'ftFileSystemInfo',
+    'deleteAllFiles',
+    'getFtStorageDetails',
   ]);
   const [fileTransferState, setFileTransferState] = useState<VMState>('None');
   const [currentPath, setCurrentPath] = useState<string>('/');
   const currentPathRef = useRef(currentPath);
   const refreshTimerRef = useRef<number | null>(null);
   currentPathRef.current = currentPath;
-  const [listType, setListType] = useState<'completed' | 'transfer'>(
-    'completed'
-  );
+  const [listType, setListType] = useState<'completed' | 'transfer'>('completed');
   const [completedList, setCompletedList] = useState<Row[]>([]);
-  const [transferType, setTransferType] = useState<'upload' | 'download'>(
-    'upload'
-  );
+  const [transferType, setTransferType] = useState<'upload' | 'download'>('upload');
   const inputRef = useRef<HTMLInputElement>(null);
   const uploadDropZoneRef = useRef<UploadDropZoneRef>(null);
   const {
@@ -147,7 +140,10 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     httpDownloadUrl: env.target === 'device' ? '/ft/file' : undefined,
     onStart: task => {
       logger.debug('Download started', { name: task.name });
-      updateProgressDownload(task.id, task as import('@/stores/slices/fileTransferDownloadSlice').DownloadItem);
+      updateProgressDownload(
+        task.id,
+        task as import('@/stores/slices/fileTransferDownloadSlice').DownloadItem
+      );
     },
     onProgress: task => {
       logger.debug('Download progress', {
@@ -157,7 +153,10 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
       if (task.progress === 100) {
         removeDownloadRow(task.id);
       } else {
-        updateProgressDownload(task.id, task as import('@/stores/slices/fileTransferDownloadSlice').DownloadItem);
+        updateProgressDownload(
+          task.id,
+          task as import('@/stores/slices/fileTransferDownloadSlice').DownloadItem
+        );
       }
     },
     onComplete: task => {
@@ -166,24 +165,29 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     },
     onError: (task, err) => {
       logger.error('Download failed', { name: task.name, error: err });
-      updateProgressDownload(task.id, { ...task, state: 'failed' } as import('@/stores/slices/fileTransferDownloadSlice').DownloadItem);
+      updateProgressDownload(task.id, {
+        ...task,
+        state: 'failed',
+      } as import('@/stores/slices/fileTransferDownloadSlice').DownloadItem);
     },
   });
   const downloadsMap = useAppStore(s => s.fileDownloadList.byId);
   const downloads = Object.values(downloadsMap);
 
-  const [storageInfo, setStorageInfo] = useState<StorageInfo>({
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>({
     free_space: 0,
     total_space: 0,
     used_space: 0,
   });
+  const [ftStorageDetails, setFtStorageDetails] = useState<
+    | (Omit<FtStorageDetailsResponse, 'categories'> & {
+        categories: (Omit<FtStorageDetailsResponse['categories'][number], 'id'> & { id: string })[];
+      })
+    | null
+  >(null);
 
   const runningUploadTaskNames = useMemo(() => {
-    return new Set(
-      uploads
-        .filter(upload => upload.state === 'running')
-        .map(upload => upload.name)
-    );
+    return new Set(uploads.filter(upload => upload.state === 'running').map(upload => upload.name));
   }, [uploads]);
 
   const showCompletedList = useMemo(() => {
@@ -197,8 +201,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
 
   const { confirm } = useConfirmDialog();
   const selectedCompletedRows = useMemo(
-    () =>
-      showCompletedList.filter((item, i) => selectedCompletedRowKeys.includes(i)),
+    () => showCompletedList.filter((item, i) => selectedCompletedRowKeys.includes(i)),
     [showCompletedList, selectedCompletedRowKeys]
   );
 
@@ -227,19 +230,11 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
       return t('toolbar.virtualUsbDrive.downloadDisabled.ftcacheUploading');
     }
     return undefined;
-  }, [
-    selectedCompletedRows,
-    hasDirSelected,
-    hasFtcacheUploadingConflict,
-    t,
-  ]);
+  }, [selectedCompletedRows, hasDirSelected, hasFtcacheUploadingConflict, t]);
 
   const isDownload = useMemo(() => {
     return selectedCompletedRows.length > 0 && !downloadDisabledReason;
-  }, [
-    selectedCompletedRows,
-    downloadDisabledReason,
-  ]);
+  }, [selectedCompletedRows, downloadDisabledReason]);
 
   // Check if there are active upload or download tasks (excluding paused state)
   const hasActiveTransfers = useMemo(() => {
@@ -247,9 +242,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     const hasActiveUploads = uploads.some(upload => upload.state === 'running');
 
     // Check download tasks - only check running tasks, exclude paused state
-    const hasActiveDownloads = downloads.some(
-      download => download.state === 'running'
-    );
+    const hasActiveDownloads = downloads.some(download => download.state === 'running');
 
     return hasActiveUploads || hasActiveDownloads;
   }, [uploads, downloads]);
@@ -283,11 +276,23 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
           resultOnly: true,
         }
       );
-      setStorageInfo(ftFileSystemInfo as StorageInfo);
+      logger.info('ftFileSystemInfo result', { result: ftFileSystemInfo });
+      setStorageInfo((ftFileSystemInfo as StorageInfo | null | undefined) ?? null);
     } finally {
       stopLoading('ftFileSystemInfo');
     }
   }, [sendAsync, isConnected, wrap, startLoading, stopLoading]);
+
+  const getFtStorageDetails = useCallback(async () => {
+    if (!isConnected) return;
+    const response = await wrap(
+      'getFtStorageDetails',
+      sendAsync({ method: 'getFtStorageDetails' })
+    );
+    if (response.success) {
+      setFtStorageDetails(response.result);
+    }
+  }, [sendAsync, isConnected, wrap]);
 
   const getCompletedList = useCallback(
     async (path = '/') => {
@@ -326,11 +331,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
           // Remove paused tasks in current directory that are not in validIds
           // Keep waiting tasks (running/pending); only clean paused tasks with no device cache
           currentUploads.forEach((task: TransferRow) => {
-            if (
-              task.path === path &&
-              task.state === 'paused' &&
-              !validIds.has(task.id)
-            ) {
+            if (task.path === path && task.state === 'paused' && !validIds.has(task.id)) {
               // Cleanup potentially stale DataChannel and controller as well
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const ctrl = (controllers as any)?.[task.id];
@@ -342,10 +343,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
                     ch.onbufferedamountlow = null;
                     ch.onerror = null;
                     ch.onclose = null;
-                    if (
-                      ch.readyState === 'open' ||
-                      ch.readyState === 'connecting'
-                    ) {
+                    if (ch.readyState === 'open' || ch.readyState === 'connecting') {
                       ch.close();
                     }
                   } catch {}
@@ -422,11 +420,20 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
           handleMountWithFileImg('Kvm');
         } else if (result?.target === 'Kvm') {
           getFtFileSystemInfo();
+          getFtStorageDetails();
           getCompletedList();
         }
       }
     },
-    [sendAsync, isConnected, currentPath, wrap, getCompletedList]
+    [
+      sendAsync,
+      isConnected,
+      currentPath,
+      wrap,
+      getCompletedList,
+      getFtFileSystemInfo,
+      getFtStorageDetails,
+    ]
   );
 
   // Mount media
@@ -457,6 +464,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
         onResponse() {
           if (target === 'Kvm') {
             getFtFileSystemInfo();
+            getFtStorageDetails();
             getCompletedList();
           }
           syncGetFileTransferState();
@@ -473,6 +481,8 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
       stopLoading,
       syncGetFileTransferState,
       fileTransferState,
+      getFtFileSystemInfo,
+      getFtStorageDetails,
     ]
   );
 
@@ -509,6 +519,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     stopLoading('ftDelDir');
     getCompletedList(currentPath);
     getFtFileSystemInfo();
+    getFtStorageDetails();
   }, [
     selectedCompletedRows,
     hasFtcacheUploadingConflict,
@@ -516,16 +527,43 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     sendAsync,
     startLoading,
     stopLoading,
+    getCompletedList,
+    getFtFileSystemInfo,
+    getFtStorageDetails,
+  ]);
+
+  const handleDeleteAllFiles = useCallback(async () => {
+    if (isLoading('deleteAllFiles')) return;
+    startLoading('deleteAllFiles');
+    const { success, error } = await sendAsync(
+      { method: 'clearFtUserFiles' },
+      { showUnhandledErrorToast: false }
+    );
+    stopLoading('deleteAllFiles');
+    if (!success) {
+      toast.error(t('toolbar.virtualUsbDrive.storageDetails.filesDeleteFailed'));
+      throw new Error(error.message);
+    }
+    await Promise.all([getCompletedList('/'), getFtFileSystemInfo(), getFtStorageDetails()]);
+    toast.success(t('toolbar.virtualUsbDrive.storageDetails.filesDeleted'));
+  }, [
+    sendAsync,
+    getCompletedList,
+    getFtFileSystemInfo,
+    getFtStorageDetails,
+    isLoading,
+    startLoading,
+    stopLoading,
+    t,
   ]);
 
   // Download selected files
   const handleDownload = useCallback(() => {
     if (hasFtcacheUploadingConflict) return;
 
-    const targets = selectedCompletedRows
-      .map(item => {
-        return { name: item.name, path: currentPath, totalBytes: item.size };
-      });
+    const targets = selectedCompletedRows.map(item => {
+      return { name: item.name, path: currentPath, totalBytes: item.size };
+    });
 
     downloadFile(targets);
     setListType('transfer');
@@ -550,12 +588,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
       errorMessage: '',
     }));
     setDownloadFileList(seedItems);
-  }, [
-    selectedCompletedRows,
-    hasFtcacheUploadingConflict,
-    currentPath,
-    setDownloadFileList,
-  ]);
+  }, [selectedCompletedRows, hasFtcacheUploadingConflict, currentPath, setDownloadFileList]);
 
   // Create directory
   const handleCreateDir = useCallback(() => {
@@ -566,6 +599,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
           size="lg"
           ref={inputRef}
           autoFocus
+          allowChinese
           placeholder={t('toolbar.virtualUsbDrive.createDirDialog.placeholder')}
         />
       ),
@@ -593,27 +627,28 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     });
   }, [inputRef, confirm, currentPath, sendAsync]);
 
-   const handleCreateFile= useCallback((path) => {
-    send({
-          method: 'ftCreateFile',
-          params: {
-            path:path.replace(/\/+/g, '/')
-          },
-          onResponse() {
-            getCompletedList(currentPath);
-            // stopLoading('ftCreateDir');
-          },
-          onError() {
-            // stopLoading('ftCreateDir');
-          },
-        });
-  }, [inputRef, confirm, currentPath, sendAsync]);
+  const handleCreateFile = useCallback(
+    path => {
+      send({
+        method: 'ftCreateFile',
+        params: {
+          path: path.replace(/\/+/g, '/'),
+        },
+        onResponse() {
+          getCompletedList(currentPath);
+          // stopLoading('ftCreateDir');
+        },
+        onError() {
+          // stopLoading('ftCreateDir');
+        },
+      });
+    },
+    [inputRef, confirm, currentPath, sendAsync]
+  );
 
   const startParamsFn = (file: File) => {
     return {
-      path: currentPathRef.current
-        .replace(/\/{2,}/g, '/')
-        .replace(/([^:])\/$/, '$1'),
+      path: currentPathRef.current.replace(/\/{2,}/g, '/').replace(/([^:])\/$/, '$1'),
       name: file.name,
       size: file.size,
     };
@@ -633,8 +668,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
       // Reconcile controller state with task list:
       // If a controller still has an open DataChannel, restore that task to 'running'.
       // If the channel is dead, clean up the stale controller.
-      const { fileTransferList, controllers, removeUploadController } =
-        useAppStore.getState();
+      const { fileTransferList, controllers, removeUploadController } = useAppStore.getState();
       if (controllers) {
         Object.entries(controllers).forEach(([key, ctrl]) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -719,8 +753,9 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
       refreshTimerRef.current = null;
       getCompletedList(currentPathRef.current);
       getFtFileSystemInfo();
+      getFtStorageDetails();
     }, 3000);
-  }, [clearRefreshTimer, getCompletedList, getFtFileSystemInfo]);
+  }, [clearRefreshTimer, getCompletedList, getFtFileSystemInfo, getFtStorageDetails]);
 
   useEffect(() => {
     return () => {
@@ -801,14 +836,12 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
           'not-supported',
           'permission-denied',
         ]);
-        const isRecoverable =
-          err instanceof UploadResumeError && recoverableCodes.has(err.code);
+        const isRecoverable = err instanceof UploadResumeError && recoverableCodes.has(err.code);
 
         if (isRecoverable) {
           toast.info(
             t('toolbar.virtualUsbDrive.resumeFallback', {
-              defaultValue:
-                'Please re-select the file to continue the upload',
+              defaultValue: 'Please re-select the file to continue the upload',
             })
           );
           uploadDropZoneRef.current?.openFilePicker();
@@ -836,6 +869,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     transferType,
     setTransferType,
     storageInfo,
+    ftStorageDetails,
     selectedCompletedRowKeys,
     setSelectedCompletedRowKeys,
     isDownload,
@@ -850,6 +884,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     handlePauseUpload,
     handleRemoveUpload,
     handleDelete,
+    handleDeleteAllFiles,
     handleDownload,
     handleCancelDownload,
     handleCreateDir,
@@ -859,6 +894,7 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
     handleOpenFile,
     getCompletedList,
     getFtFileSystemInfo,
+    getFtStorageDetails,
     syncGetFileTransferState,
     startParamsFn,
     onStartUpload,
@@ -880,4 +916,4 @@ export function useVirtualUsbDrive({ rpc }: VirtualUsbDriveProps) {
   };
 }
 
-export type UseVirtualUsbDriveReturn = ReturnType<typeof useVirtualUsbDrive>
+export type UseVirtualUsbDriveReturn = ReturnType<typeof useVirtualUsbDrive>;

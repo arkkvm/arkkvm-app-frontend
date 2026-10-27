@@ -17,6 +17,7 @@ export type SettingsPanel =
 
 // USB Configuration Types
 export interface USBConfig {
+  force_full_speed?: boolean
   vendor_id: string
   product_id: string
   serial_number: string
@@ -51,6 +52,7 @@ export interface NetworkConfig {
 }
 
 export interface UsbDeviceConfig {
+  network_adapter?: Record<string, unknown> & { enable: boolean }
   keyboard: boolean
   absolute_mouse: boolean
   relative_mouse: boolean
@@ -106,6 +108,8 @@ export interface NetworkState {
 
 export type NetworkInfo = NetworkSettings & NetworkState
 export type DeviceSettings = {
+  mcpEnabled?: boolean
+  sshForwarding?: boolean
   webTerminalEnabled: boolean
   appVersion: string
   systemVersion: string

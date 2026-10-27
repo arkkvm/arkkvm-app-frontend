@@ -9,6 +9,7 @@
  */
 
 import { Suspense, useEffect } from 'react';
+import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 
 import { useAppStore } from '@/stores';
@@ -24,7 +25,12 @@ const GlobalLoadingFallback = () => (
   <div className="loading-box">Loading...</div>
 );
 const App = () => {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation('common');
+  useEffect(() => {
+    if (sessionStorage.getItem('logout-revocation-failed') !== '1') return;
+    sessionStorage.removeItem('logout-revocation-failed');
+    toast.warning(t('login.logoutRevocationFailed'), { duration: Infinity });
+  }, [t]);
   const currentLang = useAppStore(s => s.currentLang);
   const currentTheme = useAppStore(s => s.currentTheme);
   const setTheme = useAppStore(s => s.setTheme);

@@ -1,0 +1,22 @@
+{
+  "production": {
+    "global": {
+      "apiUrl": "https://api.arkkvm.com",
+      "appUrl": "https://app.arkkvm.com"
+    },
+    "china": {
+      "apiUrl": "https://api.arkkvm.cn",
+      "appUrl": "https://app.arkkvm.cn"
+    }
+  },
+  "test": {
+    "global": {
+      "apiUrl": "https://api-tst.arkkvm.com",
+      "appUrl": "https://app-tst.arkkvm.com"
+    },
+    "china": {
+      "apiUrl": "https://api.arkkvm.cn",
+      "appUrl": "https://app.arkkvm.cn"
+    }
+  }
+}

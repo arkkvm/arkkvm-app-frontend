@@ -201,6 +201,18 @@ export default defineConfig(({ mode }) => {
     buildTimestamp: BUILD_TIMESTAMP,
   })
 
+  // Runtime-only cloud packages deliberately omit all injected cloud addresses.
+  if (BUILD_TARGET === 'cloud' && process.env.ARKKVM_CLOUD_RUNTIME_ONLY === '1') {
+    for (const key of [
+      'RSB_API_BASE_URL', 'RSB_API_DOMAIN',
+      'RSB_API_BASE_URL_CLOUD', 'RSB_APP_BASE_URL_CLOUD',
+      'RSB_API_BASE_URL_CLOUD_CN', 'RSB_APP_BASE_URL_CLOUD_CN',
+    ]) {
+      defineEnv[`import.meta.env.${key}`] = JSON.stringify('');
+      defineEnv[`process.env.${key}`] = JSON.stringify('');
+    }
+  }
+
   const { assetPrefix, distRoot } = resolveOutputOptions({
     buildTarget: BUILD_TARGET,
     cloudBuildMode: CLOUD_BUILD_MODE,
@@ -211,7 +223,7 @@ export default defineConfig(({ mode }) => {
   return {
     output: {
       distPath: {
-        root: distRoot,
+        root: process.env.ARKKVM_OUTPUT_DIR || distRoot,
       },
       assetPrefix,
     },
@@ -221,6 +233,9 @@ export default defineConfig(({ mode }) => {
     html: {
       favicon: path.resolve(__dirname, 'src/assets/icons/logo.svg'),
       title: 'ArkKVM',
+      meta: {
+        google: 'notranslate',
+      },
     },
     plugins: [
       pluginReact(),

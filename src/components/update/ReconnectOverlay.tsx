@@ -70,7 +70,7 @@ export function ReconnectOverlay() {
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.9, opacity: 0 }}
-            className="flex flex-col items-center gap-6 p-8 text-center"
+            className="flex w-full max-w-lg flex-col items-center gap-6 p-8 text-center"
           >
             {/* Loading animation */}
             <div className="relative">
@@ -85,7 +85,7 @@ export function ReconnectOverlay() {
             </h2>
 
             {/* Description */}
-            <p className="max-w-md text-base text-gray-300">
+            <p className="w-full text-base text-gray-300">
               {t('updateDialog.reconnect.desc', {
                 defaultValue:
                   'Your device has been updated successfully. Reconnecting in {{seconds}} seconds...',

@@ -4,9 +4,6 @@ set -euo pipefail
 # ArkKVM unified dev/build script.
 # Usage: ./run.sh <action> <target> [env] [value]
 
-DEFAULT_CLOUD_API_DOMAIN="https://api.example.com"
-DEFAULT_CLOUD_APP_DOMAIN="https://app.example.com"
-
 log_info() {
   printf '[run.sh] %s\n' "$1"
 }
@@ -65,9 +62,18 @@ Environment Variables:
   APP_DOMAIN                  Cloud app domain override
   DEVICE_IP                   Device IP used when target=device and value is omitted
   RSB_API_BASE_URL_CLOUD      Cloud API fallback
+  API_DOMAIN_CN               China cloud API domain override
+  APP_DOMAIN_CN               China cloud app domain override
   CLOUD_BUILD_MODE            Cloud build output mode: versioned | flat
   DEBUG_RUN=1                 Print resolved environment details
   DEBUG_BUILD=1               Print selected Rsbuild resolved values
+  ARKKVM_CLOUD_RUNTIME_ONLY=1 Clear injected API/App addresses for cloud builds
+
+Release builds:
+  The build action uses the existing version; it does not generate a new
+  version, write dist version files, or create/update ZIP archives.
+  Use ./build.sh for runtime Cloud + Device, or ./build.sh --version VERSION
+  for a versioned Cloud release with ZIP and version files.
 EOF
 }
 
@@ -138,12 +144,31 @@ case "$env" in
     ;;
 esac
 
+check_node_version
+
+# Use the same official region defaults as the frontend. Explicit overrides below win.
+region_defaults="$(node -e '
+  const mapping = require("./cloud-regions.json");
+  const regions = mapping[process.argv[1] === "test" ? "test" : "production"];
+  console.log(regions.global.apiUrl, regions.global.appUrl, regions.china.apiUrl, regions.china.appUrl);
+' "$env")"
+read -r DEFAULT_CLOUD_API_DOMAIN DEFAULT_CLOUD_APP_DOMAIN DEFAULT_CLOUD_API_DOMAIN_CN DEFAULT_CLOUD_APP_DOMAIN_CN <<< "$region_defaults"
+
+runtime_cloud_build=0
+if [ "$action" = build ] && [ "$target" = cloud ] && [ "${ARKKVM_CLOUD_RUNTIME_ONLY:-0}" = 1 ]; then
+  runtime_cloud_build=1
+fi
 env_file=".env.${env}"
+if [ "$runtime_cloud_build" -eq 1 ]; then env_file=''; fi
 env_app_version="$(read_env_value "$env_file" "RSB_APP_VERSION")"
 env_cloud_api_domain="$(read_env_value "$env_file" "RSB_API_BASE_URL_CLOUD")"
 env_cloud_app_domain="$(read_env_value "$env_file" "RSB_APP_BASE_URL_CLOUD")"
+env_cloud_api_domain_cn="$(read_env_value "$env_file" "RSB_API_BASE_URL_CLOUD_CN")"
+env_cloud_app_domain_cn="$(read_env_value "$env_file" "RSB_APP_BASE_URL_CLOUD_CN")"
 
-if [ -n "$env_app_version" ]; then
+if [ -n "${ARKKVM_BUILD_VERSION:-}" ]; then
+  export RSB_APP_VERSION="$ARKKVM_BUILD_VERSION"
+elif [ -n "$env_app_version" ]; then
   export RSB_APP_VERSION="$env_app_version"
 fi
 
@@ -156,6 +181,10 @@ else
 fi
 
 app_domain="${APP_DOMAIN:-${env_cloud_app_domain:-$DEFAULT_CLOUD_APP_DOMAIN}}"
+if [ "$runtime_cloud_build" -eq 1 ]; then
+  api_domain=''
+  app_domain=''
+fi
 
 if [ "$action" = "dev" ] && [ "$target" = "device" ] && [ -z "$device_ip" ]; then
   log_error "Device IP is required for device dev mode."
@@ -173,6 +202,13 @@ export RSB_BUILD_TARGET="$target"
 export RSB_TARGET_MODE="$env"
 export RSB_API_BASE_URL_CLOUD="$api_domain"
 export RSB_APP_BASE_URL_CLOUD="$app_domain"
+export RSB_API_BASE_URL_CLOUD_CN="${API_DOMAIN_CN:-${env_cloud_api_domain_cn:-$DEFAULT_CLOUD_API_DOMAIN_CN}}"
+export RSB_APP_BASE_URL_CLOUD_CN="${APP_DOMAIN_CN:-${env_cloud_app_domain_cn:-$DEFAULT_CLOUD_APP_DOMAIN_CN}}"
+if [ "$runtime_cloud_build" -eq 1 ]; then
+  export RSB_API_BASE_URL_CLOUD_CN=''
+  export RSB_APP_BASE_URL_CLOUD_CN=''
+  export RSB_TARGET_MODE=production
+fi
 
 if [ "$target" = "cloud" ]; then
   export RSB_API_BASE_URL="$api_domain"
@@ -182,11 +218,19 @@ else
   export RSB_API_BASE_URL=""
 fi
 
-log_info "action=$action target=$target env=$env"
+if [ "$runtime_cloud_build" -eq 1 ]; then
+  log_info "action=$action target=cloud config=runtime"
+else
+  log_info "action=$action target=$target env=$env"
+fi
 if [ "$target" = "device" ]; then
   log_info "device IP: $device_ip"
 else
-  log_info "cloud API: $api_domain"
+  if [ "$runtime_cloud_build" -eq 1 ]; then
+    log_info 'cloud API: runtime JSON or official hostname'
+  else
+    log_info "cloud API: $api_domain"
+  fi
 fi
 
 if [ "${DEBUG_RUN:-0}" = "1" ]; then
@@ -198,10 +242,10 @@ if [ "${DEBUG_RUN:-0}" = "1" ]; then
   log_info "RSB_API_BASE_URL=$RSB_API_BASE_URL"
   log_info "RSB_API_BASE_URL_CLOUD=$RSB_API_BASE_URL_CLOUD"
   log_info "RSB_APP_BASE_URL_CLOUD=$RSB_APP_BASE_URL_CLOUD"
+  log_info "RSB_API_BASE_URL_CLOUD_CN=$RSB_API_BASE_URL_CLOUD_CN"
+  log_info "RSB_APP_BASE_URL_CLOUD_CN=$RSB_APP_BASE_URL_CLOUD_CN"
   log_info "RSB_APP_VERSION=${RSB_APP_VERSION:-<unset>}"
 fi
-
-check_node_version
 
 if [ "$action" = "dev" ]; then
   if [ "$target" = "cloud" ]; then

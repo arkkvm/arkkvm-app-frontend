@@ -1,3 +1,5 @@
+import { readForwardingSettings, writeForwardingSetting } from '@/services/deviceSettings';
+import { Badge } from '../ui/badge';
 import { type JsonRpcHandle } from '@/hooks/useJsonRpc';
 import { useFileDownload } from '@/hooks/useFileDownload';
 import { useLoadingMap } from '@/hooks/useLoading';
@@ -9,7 +11,7 @@ import {
 } from '@/stores/devicesStore';
 import { createLogger } from '@/utils/logger';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { useConfirmDialog } from '../ui/confirm-dialog';
@@ -46,6 +48,110 @@ export default function SettingAdvanced({ rpc }: { rpc: JsonRpcHandle }) {
   const downloadStartTimeRef = useRef<number>(0);
   const networkDialogShownRef = useRef(false);
   const [facrotyResetState, setFacrotyResetState] = useState(false);
+  const mcpEnabled = useActiveDeviceSettings(s => s.mcpEnabled) ?? false;
+  const sshForwarding = useActiveDeviceSettings(s => s.sshForwarding) ?? false;
+  const activeDeviceId = useSettingsStore(s => s.activeDeviceId);
+  const [forwardingReady, setForwardingReady] = useState(false);
+  const [forwardingBusy, setForwardingBusy] = useState(false);
+  const [forwardingSaving, setForwardingSaving] = useState(false);
+  const forwardingOperation = useRef(false);
+  const forwardingGeneration = useRef(0);
+  useEffect(() => {
+    const generation = ++forwardingGeneration.current;
+    setForwardingReady(false);
+    setForwardingBusy(false);
+    setForwardingSaving(false);
+    forwardingOperation.current = false;
+    if (!isChannelReady || !activeDeviceId) return;
+    void readForwardingSettings(sendAsync).then(settings => {
+      if (generation !== forwardingGeneration.current) return;
+      if (!settings) {
+        toast.error(t('settings:advanced.forwarding.unavailable'));
+        return;
+      }
+      useSettingsStore
+        .getState()
+        .setDeviceSettingById(activeDeviceId, 'mcpEnabled', settings.mcpEnabled);
+      useSettingsStore
+        .getState()
+        .setDeviceSettingById(activeDeviceId, 'sshForwarding', settings.sshForwarding);
+      setForwardingReady(true);
+    });
+    return () => {
+      ++forwardingGeneration.current;
+    };
+  }, [isChannelReady, activeDeviceId, sendAsync, t]);
+
+  const handleForwardingChange = async (setting: 'mcp' | 'forwarding', enabled: boolean) => {
+    if (!forwardingReady || !isChannelReady || forwardingOperation.current || !activeDeviceId)
+      return;
+    if (setting === 'forwarding' && !mcpEnabled) return;
+    forwardingOperation.current = true;
+    setForwardingBusy(true);
+    const generation = forwardingGeneration.current;
+    const current = () => generation === forwardingGeneration.current;
+    const finish = () => {
+      if (current()) {
+        forwardingOperation.current = false;
+        setForwardingBusy(false);
+        setForwardingSaving(false);
+      }
+    };
+    const apply = async () => {
+      try {
+        if (!current()) return;
+        setForwardingSaving(setting === 'forwarding');
+        const response = await writeForwardingSetting(sendAsync, setting, enabled);
+        if (!current() || !response.success) return;
+        // Read the authoritative state, including MCP's shutdown cascade.
+        setForwardingReady(false);
+        const settings = await readForwardingSettings(sendAsync);
+        if (!current()) return;
+        if (!settings) {
+          toast.error(t('settings:advanced.forwarding.unavailable'));
+          return;
+        }
+        useSettingsStore
+          .getState()
+          .setDeviceSettingById(activeDeviceId, 'mcpEnabled', settings.mcpEnabled);
+        useSettingsStore
+          .getState()
+          .setDeviceSettingById(activeDeviceId, 'sshForwarding', settings.sshForwarding);
+        setForwardingReady(true);
+      } finally {
+        finish();
+      }
+    };
+    if (setting === 'forwarding' && enabled) {
+      let confirmed = false;
+      await confirm({
+        title: t('settings:advanced.forwarding.confirmTitle'),
+        content: (
+          <div className="space-y-3 text-sm">
+            {(
+              t('settings:advanced.forwarding.confirmDescription', {
+                returnObjects: true,
+              }) as string[]
+            ).map((line, index) => (
+              <p key={index}>
+                <Trans defaults={line} components={{ strong: <strong /> }} />
+              </p>
+            ))}
+          </div>
+        ),
+        confirmText: t('settings:advanced.forwarding.enable'),
+        cancelText: t('settings:advanced.forwarding.cancel'),
+        onConfirm: () => {
+          confirmed = true;
+          return apply();
+        },
+      });
+      // Radix also emits close after Enable. Only a real cancellation releases this lock here.
+      if (!confirmed) finish();
+      return;
+    }
+    await apply();
+  };
   const peerConnectionState = useAppStore(s => s.rtc?.peerConnectionState ?? 'disconnected');
   const [downloadFile] = useFileDownload({
     requestDownload: async (task, sa) => {
@@ -437,6 +543,48 @@ export default function SettingAdvanced({ rpc }: { rpc: JsonRpcHandle }) {
               {t('settings:advanced.troubleshooting.diagnostic.button')}
             </Button>
           </SettingBlock.Right>
+        </SettingBlock>
+        <SettingBlock
+          title={
+            <span className="inline-flex items-center gap-2">
+              {t('settings:advanced.mcp.title')}
+              <Badge>{t('settings:advanced.mcp.experimental')}</Badge>
+            </span>
+          }
+          content={t('settings:advanced.mcp.desc')}
+        >
+          <SettingBlock.Right>
+            <Switch
+              aria-label={t('settings:advanced.mcp.title')}
+              checked={mcpEnabled}
+              onCheckedChange={enabled => void handleForwardingChange('mcp', enabled)}
+              disabled={!isChannelReady || !forwardingReady || forwardingBusy}
+            />
+          </SettingBlock.Right>
+        </SettingBlock>
+        <SettingBlock
+          title={t('settings:advanced.forwarding.title')}
+          content={t('settings:advanced.forwarding.desc')}
+          className="pl-[24px]"
+        >
+          <SettingBlock.Right className="flex items-center gap-2">
+            {forwardingSaving && (
+              <span role="status" className="inline-flex items-center text-text">
+                <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
+                <span className="sr-only">{t('settings:advanced.forwarding.saving')}</span>
+              </span>
+            )}
+            <Switch
+              aria-label={t('settings:advanced.forwarding.title')}
+              aria-busy={forwardingSaving}
+              checked={sshForwarding}
+              onCheckedChange={enabled => void handleForwardingChange('forwarding', enabled)}
+              disabled={!isChannelReady || !forwardingReady || forwardingBusy || !mcpEnabled}
+            />
+          </SettingBlock.Right>
+          <SettingBlock.Bottom className="pl-[24px]">
+            <p className="text-sm text-warning">{t('settings:advanced.forwarding.warning')}</p>
+          </SettingBlock.Bottom>
         </SettingBlock>
       </div>
     </SettingPageContainer>

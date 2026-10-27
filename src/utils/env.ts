@@ -10,6 +10,10 @@
 /** Runtime environment configuration for device/cloud modes. */
 
 /** Deployment target: device (local KVM) or cloud (web service) */
+import type { CloudRuntimeConfig } from './cloudRuntimeConfig';
+import { getCloudRegions, type CloudRegion } from './cloudRegions';
+export type { CloudRegion, CloudRegionId } from './cloudRegions';
+
 type TargetMode = 'device' | 'cloud'
 type ProtocolTarget = 'http' | 'ws'
 
@@ -27,8 +31,28 @@ const target: TargetMode =
   (import.meta.env.RSB_BUILD_TARGET as TargetMode) || 'device';
 // test | pro (environment tier only, independent of local/cloud)
 const envMode = import.meta.env.RSB_TARGET_MODE || 'test';
-const officialCloudApiUrl = import.meta.env.RSB_API_BASE_URL_CLOUD || '';
-const officialCloudAppUrl = import.meta.env.RSB_APP_BASE_URL_CLOUD || '';
+const defaultCloudRegions = getCloudRegions(envMode === 'test' ? 'test' : 'production');
+const globalRegion = defaultCloudRegions[0];
+const chinaRegion = defaultCloudRegions[1];
+const officialCloudApiUrl = import.meta.env.RSB_API_BASE_URL_CLOUD || globalRegion.apiUrl;
+const officialCloudAppUrl = import.meta.env.RSB_APP_BASE_URL_CLOUD || globalRegion.appUrl;
+const officialCloudApiUrlCn = import.meta.env.RSB_API_BASE_URL_CLOUD_CN || chinaRegion.apiUrl;
+const officialCloudAppUrlCn = import.meta.env.RSB_APP_BASE_URL_CLOUD_CN || chinaRegion.appUrl;
+
+/**
+ * Bundled official defaults, with existing build-time endpoint overrides.
+ */
+export const cloudRegions: CloudRegion[] = [
+  { id: 'global', apiUrl: officialCloudApiUrl, appUrl: officialCloudAppUrl },
+  { id: 'china', apiUrl: officialCloudApiUrlCn, appUrl: officialCloudAppUrlCn },
+];
+
+export function findCloudRegion(
+  apiUrl: string | undefined,
+  appUrl: string | undefined,
+): CloudRegion | undefined {
+  return cloudRegions.find(region => region.apiUrl === apiUrl && region.appUrl === appUrl);
+}
 function buildProtocolUrl(
   inputUrl: string,
   targetType: ProtocolTarget,
@@ -87,6 +111,28 @@ const apiBaseUrl = isDev
 const signalingUrl = isDev
   ? `${buildProtocolUrl(window.location.origin, 'ws')}/webrtc/signaling/client`
   : `${buildProtocolUrl(apiBaseUrl, 'ws')}/webrtc/signaling/client`;
+let cloudRuntimeConfig: CloudRuntimeConfig | undefined;
+let cloudInitialization: Promise<void> | undefined;
+
+/** Resolve once, before importing the cloud application and its API modules. */
+export function initializeCloudEnvironment(): Promise<void> {
+  if (target !== 'cloud' || isDev) return Promise.resolve();
+  cloudInitialization ??= import('./cloudRuntimeConfig').then(async ({ resolveCloudRuntimeConfig, deriveCloudRegions }) => {
+    const legacy = baseApiUrl.trim() ? {
+      apiBaseUrl,
+      appBaseUrl: window.location.origin,
+    } : undefined;
+    const resolved = await resolveCloudRuntimeConfig(window.location, legacy);
+    // Keep all original self-hosted settings, including a separate login URL.
+    if (resolved.source !== 'legacy') {
+      cloudRuntimeConfig = resolved;
+      const regions = deriveCloudRegions(resolved);
+      if (regions.length) cloudRegions.splice(0, cloudRegions.length, ...regions);
+    }
+  });
+  return cloudInitialization;
+}
+
 export const env = {
   baseApiUrl,
   apiDomain,
@@ -95,13 +141,20 @@ export const env = {
   isDev,
   isHttps,
   isSecureContext,
-  apiBaseUrl,
-  signalingUrl,
+  get apiBaseUrl() { return cloudRuntimeConfig?.apiBaseUrl ?? apiBaseUrl; },
+  get appBaseUrl() { return cloudRuntimeConfig?.appBaseUrl ?? window.location.origin; },
+  get signalingUrl() {
+    return cloudRuntimeConfig
+      ? `${buildProtocolUrl(cloudRuntimeConfig.apiBaseUrl, 'ws')}/webrtc/signaling/client`
+      : signalingUrl;
+  },
   officialCloudApiUrl,
   officialCloudAppUrl,
-  loginCloudUrl: buildProtocolUrl(apiDomain, 'http')
+  officialCloudApiUrlCn,
+  officialCloudAppUrlCn,
+  cloudRegions,
+  get loginCloudUrl() { return cloudRuntimeConfig?.apiBaseUrl ?? buildProtocolUrl(apiDomain, 'http'); }
 } as const;
 
-// console.log('📦 Final env config:', env);
 
 export type Env = typeof env

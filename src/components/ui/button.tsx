@@ -13,6 +13,7 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 import { sizeVariants } from './variants';
+import { stableTextChildren } from './stable-text-children';
 
 // Extract shared CSS fragments for reuse across variants
 const filledInteractive = [
@@ -259,13 +260,15 @@ function Button({
       disabled={isDisabled}
       {...rest}
     >
+      {asChild ? children : <>
       {loading ? (
         <span
           aria-hidden="true"
           className="mr-2 inline-block size-4 animate-spin rounded-full border-2 border-current border-r-transparent align-[-0.125em]"
         />
       ) : null}
-      {children}
+      {stableTextChildren(children)}
+      </>}
     </Comp>
   );
 }

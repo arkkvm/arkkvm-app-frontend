@@ -13,8 +13,11 @@
  * Persists across component remounts and instances to ensure
  * only one file uploads at a time via WebRTC DataChannel.
  */
+import { createLogger } from '@/utils/logger';
 import { useAppStore } from '@/stores';
 import { UPLOAD_LOCK_TIMEOUT } from './constants';
+
+const logger = createLogger('UploadLock');
 
 // ── Global upload lock ──────────────────────────────────────
 let _globalUploading = false;
@@ -59,10 +62,10 @@ export function acquireUploadLock(): boolean {
     );
 
     if (timedOut || !hasActiveUpload) {
-      console.warn('[Upload] Force releasing stale upload lock', {
+      logger.warn('[Upload] Force releasing stale upload lock', {
         timedOut,
         hasActiveUpload,
-        controllerKeys: Object.keys(controllers),
+        controllerCount: Object.keys(controllers).length,
         queueLength: uploadQueue.length,
       });
       _globalUploading = false;

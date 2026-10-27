@@ -1,4 +1,10 @@
 {
+  "accountDisplay": {
+    "providerUser": "{{provider}} user",
+    "user": "ArkKVM user"
+  },
+  "uploadOffsetConflict": "The device reported conflicting upload positions. Upload stopped. Retry after checking the device.",
+  "uploadConfirmationInvalid": "The device did not confirm upload progress correctly. Upload stopped. Check the device before retrying.",
   "title": "ArkKVM",
   "appTitle": "Remote Control Platform",
   "connect": "Connect",
@@ -10,8 +16,8 @@
   },
   "connected": "Connected",
   "disconnected": "Disconnected",
-  "update":"Apply Changes",
-  "refresh":"Restore Defaults",
+  "update": "Apply Changes",
+  "refresh": "Restore Defaults",
   "custom": "Custom",
   "copy": "Copy",
   "copied": "Copied",
@@ -71,6 +77,7 @@
   "login.error.failed": "Login failed, please check your username and password",
   "login.error.invalidPassword": "Invalid password, please try again",
   "login.error.invalidPasswordWithAttempts": "Invalid password. {{attempts}} attempt(s) remaining",
+  "login.error.sessionUnavailable": "Your password was accepted, but the device session could not be verified. Please try signing in again. Keep other device tabs closed while retrying.",
   "login.error.tooManyAttempts": "Too many failed attempts. Account locked for 5 minutes",
   "login.error.accountLocked": "Account is locked. Try again in {{time}} minute(s)",
   "login.error.networkError": "Login failed, please check your password",
@@ -83,19 +90,44 @@
     "title": "Welcome to ArkKVM Cloud",
     "description": "Log in to connect your ArkKVM for remote access.",
     "action": "Continue with Google",
-    "encryptedHint": "End-to-end encrypted."
+    "encryptedHint": "End-to-end encrypted.",
+    "actionProvider": "Continue with {{provider}}",
+    "upgradeFirmware": "Upgrade your device firmware before connecting it to ArkKVM Cloud China.",
+    "providersUnavailable": "Sign-in options are unavailable. Please try again later."
+  },
+  "cloudConfig": {
+    "error": "Cloud configuration error. Check apiBaseUrl and appBaseUrl in /runtime-config.json or the self-hosted deployment configuration, then reload."
+  },
+  "cloudRegionNotice": {
+    "china": "Your current location is in Mainland China. If you need to deploy and access ArkKVM devices in Mainland China, switch to the cloud server located in Mainland China.",
+    "global": "Your current location is outside Mainland China.\nIf your ArkKVM is also deployed outside Mainland China, switch to the International Cloud for the best experience.",
+    "switch": "Switch",
+    "dismiss": "Dismiss"
   },
   "cloudLoginDirect": {
     "title": "Welcome to ArkKVM Cloud",
     "description": "Access your devices from anywhere.",
     "action": "Sign in with Google",
-    "encryptedHint": "End-to-end encrypted."
+    "encryptedHint": "End-to-end encrypted.",
+    "actionProvider": "Sign in with {{provider}}"
+  },
+  "mcpConsent": {
+    "title": "Connect local ArkKVM MCP",
+    "description": "The ArkKVM MCP tool on this computer is requesting access to your ArkKVM Cloud account.",
+    "scopeTitle": "If you allow, it will be able to:",
+    "scopes": "See your device list and status; open a remote-control channel (video / keyboard / mouse) to a selected device.",
+    "noScope": "It will NOT get: your credentials, or permission to delete or modify devices.",
+    "allow": "Allow and continue to sign in",
+    "deny": "Cancel",
+    "deniedTitle": "Connection cancelled",
+    "deniedDescription": "No permissions were granted to the local MCP tool. You can safely close this page."
   },
   "adLoginError": {
     "title": "Connection Failed",
     "description": "Unable to connect to ArkKVM Cloud. Please try again later.",
     "backButton": "Back to Home"
   },
+  "login.logoutRevocationFailed": "You are signed out locally. Server session revocation could not be confirmed. Other remote sessions may still be active.",
   "login.logout": "Log Out",
   "deviceCard.status.online": "Online",
   "deviceCard.status.offline": "Offline",
@@ -256,7 +288,32 @@
       "deleteDisabled": {
         "ftcacheUploading": "Cannot delete .ftcache while matching upload is running"
       },
-      "resumeFallback": "Please re-select the file to continue the upload"
+      "resumeFallback": "Please re-select the file to continue the upload",
+      "storageDetails": {
+        "categories": {
+          "system": "System Data",
+          "targetOs": "Target OS Data",
+          "files": "Files"
+        },
+        "deleteAllCategory": "Delete All {{label}}",
+        "title": "Storage Details",
+        "type": "Type",
+        "used": "Used",
+        "required": "Required",
+        "ok": "OK",
+        "cancel": "Cancel",
+        "usedPercent": "{{percent}}% used",
+        "usedBytes": "{{size}} used",
+        "freeBytes": "{{size}} free",
+        "targetOsData": "Target OS Data",
+        "files": "Files",
+        "deleteAllFiles": "Delete All Files",
+        "targetOsNote": "Some storage may be used by hidden files, filesystem data, or metadata created automatically by the target operating system. These files may not appear in ArkKVM's file list and can be managed when the Virtual USB Drive is mounted to the target computer.",
+        "deleteFilesTitle": "Delete All Files?",
+        "deleteFilesDescription": "This will permanently delete all files from the Virtual USB Drive. This action cannot be undone.",
+        "filesDeleted": "All files were deleted successfully.",
+        "filesDeleteFailed": "Failed to delete all files. Please try again."
+      }
     }
   },
   "wol": {
@@ -270,7 +327,7 @@
     "macPlaceholder": "00:11:22:33:45:67 or 001122334567",
     "macFormatsHint": "Supported formats: 00:11:22:33:44:55, 00-11-22-33-44-55, or 001122334455",
     "wakeButton": "Wake",
-    "wakeDel":"Del",
+    "wakeDel": "Del",
     "toastInvalidMac": "Invalid MAC address",
     "toastSendFailed": "Failed to send Magic Packet",
     "toastSendSuccess": "Magic Packet sent successfully",
@@ -288,6 +345,21 @@
     "reset": "Reset",
     "powerLed": "Power LED",
     "hddLed": "HDD LED"
+  },
+  "controlLease": {
+    "statusControlling": "Agent State: Claude Code is active",
+    "statusViewOnly": "Agent State: Claude Code is view only",
+    "statusNotControlling": "Agent State: Not controlling",
+    "activeTitle": "AI Agent Active Session Detected",
+    "activeDescription": "An AI Agent is currently controlling this device. Taking over will interrupt the Agent’s task. Choose View Only to observe.",
+    "requestTitle": "AI Agent wants to use ArkKVM",
+    "requestDescription": "An AI Agent is attempting to control this device. You can hand over control by clicking Hand Over Session or View Only. Click Keep Control to refuse.",
+    "viewOnly": "View Only",
+    "takeOver": "Take Over Session",
+    "keepControl": "Keep Control",
+    "handOver": "Hand Over Session",
+    "failed": "Unable to update control. Please try again.",
+    "stale": "This request has already been handled or has expired."
   },
   "session": {
     "active": {
@@ -332,5 +404,77 @@
   "language": {
     "zh": "Chinese",
     "en": "English"
+  },
+  "deviceConnect": {
+    "redirectingDashboard": "You’ll be redirected to your dashboard shortly, or you can go there now.",
+    "saveName": "Save Device Name",
+    "nameSaved": "Device name saved.",
+    "detailsDescription": "Review this device and your signed-in account. Saving the name does not change the device’s binding.",
+    "successTitle": "Connected successfully",
+    "failureTitle": "Connection failed",
+    "successDescription": "Your ArkKVM device is now connected to ArkKVM Cloud under {{email}}.",
+    "dashboard": "Go to dashboard",
+    "dashboardHint": "You can manage or remove this device from your cloud dashboard.",
+    "confirmationError": "Could not connect this device. Your information has been kept. Please try again.",
+    "boundAccountError": [
+      "This ArkKVM is already connected to another account ({{account}}).",
+      "Sign in with that account, remove the device from ArkKVM Cloud, then try again."
+    ],
+    "failureSerial": "Serial Number: {{serial}}",
+    "boundAccountUnknown": [
+      "This ArkKVM is already connected to another account.",
+      "Sign in with that account, remove the device from ArkKVM Cloud, then try again."
+    ],
+    "alreadyBoundTitle": "Device Already Connected",
+    "handoffError": "The device was connected, but setup could not continue. Retry to continue without registering it again.",
+    "enterError": "The device name was saved, but the device page could not be opened. Try again.",
+    "draftHint": "The name will be saved when you connect.",
+    "setupTitle": "Device Setup",
+    "account": "Signed in as",
+    "accountWithProviders": "{{account}} ({{providers}})",
+    "providers": {
+      "google": "Google",
+      "microsoft": "Microsoft",
+      "github": "GitHub",
+      "apple": "Apple",
+      "wechat": "WeChat"
+    },
+    "title": "Connect device",
+    "description": "You’re about to connect this ArkKVM to ArkKVM Cloud under <account>{{email}}</account>.",
+    "connect": "Connect",
+    "continue": "Continue to Device",
+    "connecting": "Connecting…",
+    "finishing": "Completing setup…",
+    "information": "Device information",
+    "serial": "Serial Number",
+    "name": "Device Name",
+    "version": "System Version",
+    "edit": "Edit device name",
+    "save": "Save",
+    "cancel": "Cancel",
+    "required": "Enter a device name.",
+    "nameLength": "Device name must be 3–20 characters.",
+    "loading": "Loading device and account information…",
+    "retry": "Retry",
+    "deviceError": "Unable to load device information. Return to the device and start the connection again.",
+    "deviceLoadError": "The device was registered and named, but its details could not be loaded. Retry to enter the device without registering it again.",
+    "contextError": "The cloud login context is unavailable. Sign in again to continue connecting this device.",
+    "cloudStateError": "The device was registered, but its cloud destination could not be loaded. Please retry.",
+    "accountError": "Unable to verify your cloud account. Try again or sign in with a different account.",
+    "contextError": "Unable to read device information. Check the device connection and try again.",
+    "expired": "This connection request has expired. Return to the device and start again.",
+    "unavailable": "Not available",
+    "notRight": "Not the right account?",
+    "switch": "Sign in with a different account.",
+    "switching": "Signing out…",
+    "switchError": "Unable to sign out of the cloud account. Try again.",
+    "bindError": "Could not connect this device. Your information has been kept so you can try again.",
+    "nameError": "The device is connected, but its name could not be saved. Retry saving the name; the device will not be registered again.",
+    "editError": "Could not save the device name. Your changes have been kept.",
+    "alreadyBound": "This device is already connected to a cloud account. Manage or disconnect it from the device settings before connecting another account.",
+    "permission": "This account does not have permission to access or connect this device.",
+    "legacy": "Complete the name setup for this device. This page does not connect it to a different account.",
+    "back": "Return to Device",
+    "oldSession": "This cloud version did not return a web session. Sign in again to verify your account before connecting."
   }
 }

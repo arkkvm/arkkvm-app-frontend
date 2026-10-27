@@ -1,8 +1,11 @@
+import { SETTINGS_RPC_METHODS } from '@/api/rpc/methods';
+import { parseUsbDevices, readForwardingSettings, readUsbForwardingSnapshot } from '@/services/deviceSettings';
+import { useConfirmDialog } from '@/components/ui/confirm-dialog';
 /**
  * @Author: zhanglei
  * @Date: 2026-06-04 17:45:28
  * @LastEditors: zhanglei
- * @LastEditTime: 2026-08-12 17:51:01
+ * @LastEditTime: 2026-10-08 15:23:44
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -350,13 +353,11 @@ function useDeviceApi(ctx: DeviceApiContext) {
           {
             showUnhandledErrorToast: true,
             // showUnhandledErrorToast: (_resp: JsonRpcErrorResponse) => {
-            //   // console.log('resp',resp);
             //   // const reasonKey = getErrorReasonKey(resp.error?.data as string, {
             //   //   segmentIndex: 1,
             //   // });
 
             //   // const t = i18n.getFixedT(i18n.language);
-            //   //  console.log('reasonKey', reasonKey, t(`toast:${reasonKey}`));
             //   return 'Cannot disable Virtual Storage while the Virtual USB Drive is mounted to the remote system. Mount it back to ArkKVM and try again. ';
             // },
           }
@@ -468,12 +469,13 @@ function useDeviceApi(ctx: DeviceApiContext) {
           return;
         }
 
-        const nextConfig = resolveUsbConfig(config, activeDeviceId);
-
         await runWithLoading('setUsbConfig', async () => {
+          const speed = await sendAsync({ method: SETTINGS_RPC_METHODS.getUsbFullSpeed }, { showUnhandledErrorToast: true });
+          if (!speed.success || typeof speed.result !== 'boolean') return;
+          const nextConfig = { ...resolveUsbConfig(config, activeDeviceId), force_full_speed: speed.result };
           const resp = await raw.setUsbConfig(nextConfig);
 
-          if ('error' in resp) {
+          if (!resp.success) {
             showError(`Failed to update USB config: ${getErrorMessage(resp.error)}`);
             return;
           }
@@ -516,7 +518,8 @@ function useDeviceApi(ctx: DeviceApiContext) {
 
 export default function SettingDevice() {
   const { t } = useTranslation(['settings']);
-  const [, isChannelReady] = useJsonRpc();
+  const [, isChannelReady, sendAsync] = useJsonRpc();
+  const { info } = useConfirmDialog();
 
   const currentSettings = useActiveDeviceSettings();
   const backlightSettings = useActiveDeviceSettings(state => state.backlightSettings) ?? {
@@ -547,6 +550,63 @@ export default function SettingDevice() {
     manufacturer: currentSettings?.usbConfig?.manufacturer ?? '',
     product: currentSettings?.usbConfig?.product ?? '',
   });
+  const forwarding = useActiveDeviceSettings(s => s.sshForwarding) ?? false;
+  const [usbReady, setUsbReady] = useState(false);
+  const [usbBusy, setUsbBusy] = useState(false);
+  const [fullSpeed, setFullSpeed] = useState<boolean | null>(null);
+  const usbOperation = useRef(false);
+  const usbGeneration = useRef(0);
+  const showForwardingConflict = () => info({
+    title: t('settings:advanced.forwarding.title'),
+    content: t('settings:advanced.forwarding.blocked'),
+    confirmText: t('settings:advanced.forwarding.ok'),
+  });
+
+  useEffect(() => {
+    const generation = ++usbGeneration.current;
+    setUsbReady(false);
+    setFullSpeed(null);
+    setUsbBusy(false);
+    usbOperation.current = false;
+    if (!isChannelReady || !activeDeviceId) return;
+    void (async () => {
+      const [settings, usb, speed] = await Promise.all([
+        readForwardingSettings(sendAsync),
+        sendAsync({ method: 'getUsbDevices' }, { showUnhandledErrorToast: true }),
+        sendAsync({ method: SETTINGS_RPC_METHODS.getUsbFullSpeed }, { showUnhandledErrorToast: true }),
+      ]);
+      if (generation !== usbGeneration.current) return;
+      if (speed.success && typeof speed.result === 'boolean') setFullSpeed(speed.result);
+      const devices = usb.success ? parseUsbDevices(usb.result) : null;
+      if (!settings || !devices || !devices.network_adapter || devices.network_adapter.enable !== settings.sshForwarding) {
+        toast.error(t('settings:advanced.forwarding.usbUnavailable'));
+        return;
+      }
+      const store = useSettingsStore.getState();
+      store.setDeviceSettingById(activeDeviceId, 'mcpEnabled', settings.mcpEnabled);
+      store.setDeviceSettingById(activeDeviceId, 'sshForwarding', settings.sshForwarding);
+      store.setDeviceSettingById(activeDeviceId, 'usbDeviceConfig', devices);
+      const preset = settings.sshForwarding ? 'custom' :
+        USB_PRESETS.find(p => p.config && isSameByKeys(USB_DEVICE_CONFIG_KEYS, devices, p.config))?.value ?? 'custom';
+      setUsbPreset(preset);
+      store.setDeviceSettingById(activeDeviceId, 'usbPreset', preset);
+      setUsbReady(true);
+    })();
+    return () => { ++usbGeneration.current; };
+  }, [isChannelReady, activeDeviceId, sendAsync, t]);
+
+  const handleFullSpeedChange = async (enabled: boolean) => {
+    if (!isChannelReady || fullSpeed === null || usbOperation.current || isLoading('setUsbDevices') || isLoading('setUsbConfig')) return;
+    usbOperation.current = true;
+    setUsbBusy(true);
+    const generation = usbGeneration.current;
+    const response = await sendAsync({ method: SETTINGS_RPC_METHODS.setUsbFullSpeed, params: { enabled } }, { showUnhandledErrorToast: true });
+    if (generation !== usbGeneration.current) return;
+    if (response.success) setFullSpeed(enabled);
+    usbOperation.current = false;
+    setUsbBusy(false);
+  };
+
   const deviceApi = useDeviceApi({
     start,
     stop,
@@ -657,63 +717,68 @@ export default function SettingDevice() {
     };
   }, [isChannelReady, setNestedDeviceSetting]);
 
-  const handleUsbPresetChange = useCallback(
-    async (value: string, deviceConfig?: UsbDeviceConfig) => {
-      if (isLoading('setUsbDevices')) return;
-
-      const previousPreset = usbPreset;
-      const previousDeviceConfig = usbDeviceConfig;
-      setUsbPreset(value);
-
-      if (value === 'custom' && !deviceConfig) return;
-
-      const devices =
-        deviceConfig && value === 'custom'
-          ? deviceConfig
-          : USB_PRESETS.find(item => item.value === value)?.config;
-      if (!devices) return;
-
-      const nextDevices: UsbDeviceConfig = { ...defaultUsbDeviceConfig, ...devices };
-      setUsbDeviceConfig(nextDevices);
-      let success = false;
-
-      try {
-        ({ success } = await deviceApi.setUsbDevices(nextDevices));
-      } catch {
-        // The request layer handles the error message; restore the last selection below.
-      }
-
-      if (!success) {
-        setUsbPreset(previousPreset);
-        setUsbDeviceConfig(previousDeviceConfig);
+  const handleUsbPresetChange = async (value: string, deviceConfig?: UsbDeviceConfig) => {
+    if (!activeDeviceId || !isChannelReady || !usbReady || usbOperation.current || isLoading('setUsbDevices') || isLoading('setUsbConfig')) return;
+    const modeChange = !deviceConfig;
+    if (forwarding && modeChange) {
+      showForwardingConflict();
+      return;
+    }
+    usbOperation.current = true;
+    setUsbBusy(true);
+    const generation = usbGeneration.current;
+    const current = () => generation === usbGeneration.current;
+    try {
+      // Recheck at commit time: presets and Restore Defaults cannot bypass forwarding constraints.
+      const snapshot = await readUsbForwardingSnapshot(sendAsync);
+      if (!current()) return;
+      if (!snapshot) {
+        setUsbReady(false);
+        toast.error(t('settings:advanced.forwarding.usbUnavailable'));
         return;
       }
-
-      if (success) {
-        const currentMouseInputMode = getUsbMouseOption(devices);
-
-        if (currentMouseInputMode === 'none') {
-          toast.warning(t('settings:mouse.inputMode.toast.noMouseDevice'));
-          setMouseInputMode('none');
-        } else if (currentMouseInputMode === 'both' && mouseInputMode !== 'absolute') {
-          toast.info(t('settings:mouse.inputMode.toast.changedToAbsolute'));
-          setMouseInputMode('absolute');
-        } else if (currentMouseInputMode === 'relative' && mouseInputMode !== 'relative') {
-          toast.info(t('settings:mouse.inputMode.toast.changedToRelative'));
-          setMouseInputMode('relative');
-        } else if (currentMouseInputMode === 'absolute' && mouseInputMode !== 'absolute') {
-          toast.info(t('settings:mouse.inputMode.toast.changedToAbsolute'));
-          setMouseInputMode('absolute');
-        }
-        toast.success('USB devices applied');
-
-        //mouseInputMode
-        setDeviceSetting('usbDeviceConfig', devices);
-        setDeviceSetting('usbPreset', value);
+      useSettingsStore.getState().setDeviceSettingById(activeDeviceId, 'sshForwarding', snapshot.forwarding);
+      if (snapshot.forwarding && (modeChange ||
+          deviceConfig?.relative_mouse !== snapshot.devices.relative_mouse ||
+          deviceConfig?.microphone !== snapshot.devices.microphone)) {
+        showForwardingConflict();
+        setUsbPreset('custom');
+        useSettingsStore.getState().setDeviceSettingById(activeDeviceId, 'usbDeviceConfig', snapshot.devices);
+        return;
       }
-    },
-    [deviceApi, isLoading, mouseInputMode, usbDeviceConfig, usbPreset]
-  );
+      if (value === 'custom' && !deviceConfig) {
+        setUsbPreset(value);
+        return;
+      }
+      const selected = deviceConfig && value === 'custom' ? deviceConfig : USB_PRESETS.find(p => p.value === value)?.config;
+      if (!selected) return;
+      // Keep the network adapter and unknown fields from the fresh device response.
+      const devices: UsbDeviceConfig = { ...snapshot.devices, ...selected, network_adapter: snapshot.devices.network_adapter };
+      const response = await deviceApi.setUsbDevices(devices);
+      if (!current() || !response.success) return;
+      toast.success(t('settings:hardware.usb.applied'));
+      setUsbDeviceConfig(devices);
+      setUsbPreset(snapshot.forwarding ? 'custom' : value);
+      setDeviceSetting('usbDeviceConfig', devices);
+      setDeviceSetting('usbPreset', snapshot.forwarding ? 'custom' : value);
+      const mode = getUsbMouseOption(snapshot.forwarding ? { ...devices, relative_mouse: false } : devices);
+      if (mode === 'none') {
+        toast.warning(t('settings:mouse.inputMode.toast.noMouseDevice'));
+        setMouseInputMode('none');
+      } else if (mode === 'relative' && mouseInputMode !== 'relative') {
+        toast.info(t('settings:mouse.inputMode.toast.changedToRelative'));
+        setMouseInputMode('relative');
+      } else if ((mode === 'absolute' || mode === 'both') && mouseInputMode !== 'absolute') {
+        toast.info(t('settings:mouse.inputMode.toast.changedToAbsolute'));
+        setMouseInputMode('absolute');
+      }
+    } finally {
+      if (current()) {
+        usbOperation.current = false;
+        setUsbBusy(false);
+      }
+    }
+  };
 
   const handleUsbIdentifierPresetChange = useCallback(
     (value?: string) => {
@@ -743,10 +808,15 @@ export default function SettingDevice() {
     [activeDeviceId, deviceApi, setDeviceSetting]
   );
 
-  const handleUsbDeviceConfigChange = useCallback((config: UsbDeviceConfig) => {
+  const handleUsbDeviceConfigChange = (config: UsbDeviceConfig) => {
+    if (!usbReady || usbBusy) return;
+    if (forwarding && (config.relative_mouse !== usbDeviceConfig.relative_mouse || config.microphone !== usbDeviceConfig.microphone)) {
+      showForwardingConflict();
+      return;
+    }
     setUsbPreset('custom');
     setUsbDeviceConfig(config);
-  }, []);
+  };
 
   const handleUsbConfigStateChange = useCallback(
     (config: USBConfig) => {
@@ -881,81 +951,89 @@ export default function SettingDevice() {
         title={t('settings:hardware.usb.title')}
         content={t('settings:hardware.usb.desc')}
       >
-        <SettingBlock.Bottom>
-          <div className="ml-[20px]">
-            <UsbDeviceSetting
-              paddingBottom={10}
-              title={t('settings:hardware.usb.classes.title')}
-              content={t('settings:hardware.usb.classes.desc')}
-              options={usbOptions}
-              value={usbPreset}
-              onChange={val => {
-                handleUsbPresetChange(val);
-              }}
-              onUpdate={() => handleUsbPresetChange(usbPreset, usbDeviceConfig)}
-              onRefresh={() => handleUsbPresetChange('default')}
-              loading={isLoading('getUsbDevices')}
-              saving={isLoading('setUsbDevices')}
-              disabled={!isChannelReady || isLoading('setUsbDevices')}
-            >
-              <UsbDeviceSwitchGroup
-                className="ml-[20px] mt-[10px]"
-                value={usbDeviceConfig}
-                onChange={handleUsbDeviceConfigChange}
-                disabled={!isChannelReady || isLoading('setUsbDevices')}
-                titleSize={10}
-                contentSize={10}
-              />
-            </UsbDeviceSetting>
-
-            <SettingBlock
-              title={t('settings:hardware.usb.virtualUsbDrive.title')}
-              content={t('settings:hardware.usb.virtualUsbDrive.desc')}
-              titleSize={12}
+        <SettingBlock.Bottom className="ml-[20px]">
+          <UsbDeviceSetting
+            paddingBottom={10}
+            title={t('settings:hardware.usb.classes.title')}
+            content={t('settings:hardware.usb.classes.desc')}
+            options={usbOptions}
+            value={usbPreset}
+            onChange={val => {
+              handleUsbPresetChange(val);
+            }}
+            onUpdate={() => handleUsbPresetChange(usbPreset, usbDeviceConfig)}
+            onRefresh={() => handleUsbPresetChange('default')}
+            loading={isLoading('getUsbDevices')}
+            saving={usbBusy || isLoading('setUsbDevices')}
+            disabled={!isChannelReady || !usbReady || usbBusy || isLoading('setUsbDevices') || isLoading('setUsbConfig')}
+          >
+            <UsbDeviceSwitchGroup
+              className="ml-[20px] mt-[10px]"
+              value={usbDeviceConfig}
+              onChange={handleUsbDeviceConfigChange}
+              disabled={!isChannelReady || !usbReady || usbBusy || isLoading('setUsbDevices') || isLoading('setUsbConfig')}
+              lockedDevices={forwarding ? ['relative_mouse', 'microphone'] : []}
+              onLockedInteraction={showForwardingConflict}
+              titleSize={10}
               contentSize={10}
-            >
-              <SettingBlock.Right>
-                <Switch
-                  checked={fileTransfer}
-                  onCheckedChange={handleFileTransferChange}
-                  disabled={
-                    isLoading('setFileTransfer') ||
-                    isLoading('getUsbDevices') ||
-                    isLoading('setUsbDevices') ||
-                    !isChannelReady ||
-                    !canUseVirtualUsbDrive
-                  }
-                />
-              </SettingBlock.Right>
-              <SettingBlock.Bottom>
-                <span className="text-sm text-[#FB923C]">
-                  {t('settings:hardware.usb.virtualUsbDrive.warning')}
-                </span>
-              </SettingBlock.Bottom>
-            </SettingBlock>
+            />
+          </UsbDeviceSetting>
 
-            <UsbDeviceSetting
-              title={t('settings:hardware.usb.identifiers.title')}
-              content={t('settings:hardware.usb.identifiers.desc')}
-              options={usbIdentifierOptions}
-              value={usbIdentifierPreset}
-              onChange={handleUsbIdentifierPresetChange}
-              onUpdate={handleApplyUsbConfig}
-              onRefresh={() => handleUsbIdentifierPresetChange()}
-              loading={isLoading('getUsbConfig')}
-              saving={isLoading('setUsbConfig')}
-              disabled={!isChannelReady}
-            >
-              <div className="ml mt">
-                <UsbConfigForm
-                  ref={usbConfigFormRef}
-                  value={usbConfigState}
-                  onChange={handleUsbConfigStateChange}
-                  disabled={!isChannelReady}
-                />
-              </div>
-            </UsbDeviceSetting>
-          </div>
+          <SettingBlock
+            title={t('settings:hardware.usb.virtualUsbDrive.title')}
+            content={t('settings:hardware.usb.virtualUsbDrive.desc')}
+            titleSize={12}
+            contentSize={10}
+          >
+            <SettingBlock.Right>
+              <Switch
+                checked={fileTransfer}
+                onCheckedChange={handleFileTransferChange}
+                disabled={
+                  isLoading('setFileTransfer') ||
+                  isLoading('getUsbDevices') ||
+                  isLoading('setUsbDevices') ||
+                  !isChannelReady || usbBusy ||
+                  !canUseVirtualUsbDrive
+                }
+              />
+            </SettingBlock.Right>
+            <SettingBlock.Bottom>
+              <span className="text-sm text-[#FB923C]">
+                {t('settings:hardware.usb.virtualUsbDrive.warning')}
+              </span>
+            </SettingBlock.Bottom>
+          </SettingBlock>
+
+          <UsbDeviceSetting
+            title={t('settings:hardware.usb.identifiers.title')}
+            content={t('settings:hardware.usb.identifiers.desc')}
+            options={usbIdentifierOptions}
+            value={usbIdentifierPreset}
+            onChange={handleUsbIdentifierPresetChange}
+            onUpdate={handleApplyUsbConfig}
+            onRefresh={() => handleUsbIdentifierPresetChange()}
+            loading={isLoading('getUsbConfig')}
+            saving={isLoading('setUsbConfig')}
+            disabled={!isChannelReady || usbBusy || isLoading('setUsbDevices') || isLoading('setUsbConfig')}
+          >
+            <div className="ml mt">
+              <UsbConfigForm
+                ref={usbConfigFormRef}
+                value={usbConfigState}
+                onChange={handleUsbConfigStateChange}
+                disabled={!isChannelReady || usbBusy || isLoading('setUsbDevices') || isLoading('setUsbConfig')}
+              />
+            </div>
+          </UsbDeviceSetting>
+
+          <SettingBlock title={t('settings:hardware.usb.fullSpeed.title')} content={t('settings:hardware.usb.fullSpeed.desc')} titleSize={12} contentSize={10}>
+            <SettingBlock.Right>
+              <Switch title={t('settings:hardware.usb.fullSpeed.warning')} aria-label={t('settings:hardware.usb.fullSpeed.title')} checked={fullSpeed ?? false}
+                onCheckedChange={enabled => void handleFullSpeedChange(enabled)}
+                disabled={!isChannelReady || fullSpeed === null || usbBusy || isLoading('setUsbDevices') || isLoading('setUsbConfig')} />
+            </SettingBlock.Right>
+          </SettingBlock>
         </SettingBlock.Bottom>
       </SettingBlock>
     </SettingPageContainer>

@@ -1,15 +1,17 @@
+import { createLogger } from '@/utils/logger';
 import { IconCd } from '@/assets/icons';
-import type { StorageFileInfo } from '@/api/rpc/methods';
+import type { ArkKvmStorageDetailsResponse, StorageFileInfo } from '@/api/rpc/methods';
+import type { JsonRpcHandle } from '@/hooks/useJsonRpc';
 import { useLoadingMap } from '@/hooks/useLoading';
 import { useAppStore } from '@/stores';
-import { humanSize } from '@/utils/format';
-import { mergeUploadLists } from '@/utils/transfer';
+import { formatBytes, mergeUploadLists } from '@/utils/transfer';
 import { Plus } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Dialog } from '../../Dialog';
 import StorageUsage from '../../StorageUsage';
+import { StorageDeleteConfirmDialog, StorageDetailsDialog, type StorageDetailRow } from '../../StorageDetailsDialog';
 import TransferList from '../../TransferList';
 import { Button } from '../../ui/button';
 import { useConfirmDialog } from '../../ui/confirm-dialog';
@@ -29,6 +31,8 @@ import {
   type UploadResumeErrorCode,
 } from '@/utils/uploadIndexedDb';
 
+const logger = createLogger('StorageMountDialog');
+
 export type StorageMountAs = 'CDROM' | 'Disk';
 
 interface StorageFileItem {
@@ -43,55 +47,13 @@ interface StorageFileItem {
   totalBytes?: number;
 }
 
-interface StorageSpaceInfo {
-  total: number; // bytes
-  used: number; // bytes
-}
-
 interface StorageMountDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onBack: () => void;
   onMounted?: (payload: { filename: string; mountAs: StorageMountAs }) => void;
-  rpc: [
-    (call: unknown) => number | undefined,
-    boolean,
-    (call: unknown, opts?: unknown) => Promise<unknown>,
-  ]; // [send, isReady, sendAsync]
+  rpc: JsonRpcHandle;
 }
-
-const normalizeSpace = (raw: unknown): StorageSpaceInfo | null => {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  const toNum = (v: unknown) => {
-    if (v == null) return undefined;
-    if (typeof v === 'number') return v;
-    const n = Number(String(v).replace(/[^0-9.]/g, ''));
-    return Number.isFinite(n) ? n : undefined;
-  };
-  // New rule: if bytesUsed and bytesFree are provided, derive total/used from them
-  const bytesUsed = toNum(r.bytesUsed);
-  const bytesFree = toNum(r.bytesFree);
-  const hasBytesUF = bytesUsed != null && bytesFree != null;
-
-  const total = hasBytesUF
-    ? (bytesUsed as number) + (bytesFree as number)
-    : (toNum(r.total) ?? toNum(r.totalBytes) ?? toNum(r.capacity) ?? toNum(r.size));
-  const used = hasBytesUF
-    ? (bytesUsed as number)
-    : (toNum(r.used) ??
-      toNum(r.usedBytes) ??
-      (total != null && (toNum(r.free) ?? toNum(r.freeBytes)) != null
-        ? (total as number) - (toNum(r.free) ?? toNum(r.freeBytes))!
-        : undefined));
-  if (total != null && used != null) {
-    return {
-      total: Math.max(0, total),
-      used: Math.max(0, Math.min(total, used)),
-    };
-  }
-  return null;
-};
 
 const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
   open,
@@ -137,12 +99,17 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
     'mount',
     'upload',
     'listStorageFiles',
-    'getStorageSpace',
+    'getStorageDetails',
+    'clearStorageLogs',
+    'clearStorageImages',
   ]);
   const [files, setFiles] = useState<StorageFileItem[]>([]);
   // const [incompleteFiles, setIncompleteFiles] = useState<StorageFileItem[]>([]); // TODO: use for upload list management
 
-  const [space, setSpace] = useState<StorageSpaceInfo | null>(null);
+  const [storageDetails, setStorageDetails] = useState<ArkKvmStorageDetailsResponse | null>(null);
+  const [storageDetailsOpen, setStorageDetailsOpen] = useState(false);
+  const [deleteAllImagesOpen, setDeleteAllImagesOpen] = useState(false);
+  const [clearLogsConfirmOpen, setClearLogsConfirmOpen] = useState(false);
   const [selected, setSelected] = useState<StorageFileItem | null>(null);
   const [mountAs, setMountAs] = useState<StorageMountAs>('CDROM');
   const uploadMap = useAppStore(s => s.fileTransferList.byId);
@@ -155,14 +122,11 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
 
   const { confirm } = useConfirmDialog();
 
-  const fetchStorageSpace = useCallback(async () => {
+  const fetchStorageDetails = useCallback(async () => {
     if (!isReady) return;
-    const rawSpace = await wrap(
-      'getStorageSpace',
-      sendAsync({ method: 'getStorageSpace' }, { resultOnly: true })
-    );
-    setSpace(normalizeSpace(rawSpace));
-  }, [sendAsync, isReady]);
+    const response = await wrap('getStorageDetails', sendAsync({ method: 'getStorageDetails' }));
+    if (response.success) setStorageDetails(response.result);
+  }, [sendAsync, isReady, wrap]);
   const listStorageFilesAsync = useCallback(async () => {
     if (!isReady) return;
     const { success, result } = (await wrap(
@@ -223,8 +187,39 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
   }, [sendAsync, isReady, wrap, uploadingList]);
   const load = useCallback(async () => {
     setStorageTab('Available');
-    await Promise.all([listStorageFilesAsync(), fetchStorageSpace()]);
-  }, [listStorageFilesAsync, fetchStorageSpace, setStorageTab]);
+    await Promise.all([listStorageFilesAsync(), fetchStorageDetails()]);
+  }, [listStorageFilesAsync, fetchStorageDetails, setStorageTab]);
+
+  const handleDeleteAllImages = useCallback(async () => {
+    const { success, error } = await sendAsync(
+      { method: 'clearStorageImages' },
+      { showUnhandledErrorToast: false }
+    );
+    if (!success) {
+      toast.error(t('storageDialog.details.imagesDeleteFailed'));
+      throw new Error(error.message);
+    }
+    await Promise.all([listStorageFilesAsync(), fetchStorageDetails()]);
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setDeleteAllImagesOpen(false);
+    setStorageDetailsOpen(false);
+    toast.success(t('storageDialog.details.imagesDeleted'));
+  }, [sendAsync, listStorageFilesAsync, fetchStorageDetails, t]);
+
+  const handleClearLogs = useCallback(async () => {
+    const { success, error } = await sendAsync(
+      { method: 'clearStorageLogs' },
+      { showUnhandledErrorToast: false }
+    );
+    if (!success) {
+      toast.error(t('storageDialog.details.clearLogsFailed'));
+      throw new Error(error.message);
+    }
+    await fetchStorageDetails();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setClearLogsConfirmOpen(false);
+    toast.success(t('storageDialog.details.logsCleared'));
+  }, [sendAsync, fetchStorageDetails, t]);
   useEffect(() => {
     if (isReady) {
       // syncGetFileTransferState(true)
@@ -432,7 +427,7 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
               toast.success(t('storageDialog.fileDeleted'));
               // Just refresh the list without switching tabs
               listStorageFilesAsync();
-              fetchStorageSpace();
+              fetchStorageDetails();
             },
           });
 
@@ -456,6 +451,8 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
       getUploadController,
       unregisterUpload,
       removeUploadController,
+      listStorageFilesAsync,
+      fetchStorageDetails,
     ]
   );
 
@@ -590,7 +587,7 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
         try {
           setUploadRowState(uploadId, 'failed', error);
         } catch (e) {
-          console.error('Failed to mark upload row as failed', e);
+          logger.error('Failed to mark upload row as failed', e);
         }
       }
     },
@@ -608,7 +605,7 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
         try {
           setUploadRowState(id, 'running');
         } catch (e) {
-          console.error('Failed to mark upload row as running on resume', e);
+          logger.error('Failed to mark upload row as running on resume', e);
         }
       }
     },
@@ -659,252 +656,331 @@ const StorageMountDialog: React.FC<StorageMountDialogProps> = ({
     [getUploadController, setUploadRowState]
   );
 
+  const storageCategoryActions = new Map<string, { label: string; onClick: () => void }>([
+    ['logs', {
+      label: t('storageDialog.details.clearLogs'),
+      onClick: () => setClearLogsConfirmOpen(true),
+    }],
+    ['images', {
+      label: t('storageDialog.details.clearImages'),
+      onClick: () => setDeleteAllImagesOpen(true),
+    }],
+  ]);
+
+  const storageRows: StorageDetailRow[] = (storageDetails?.categories ?? []).map(category => {
+    const action = storageCategoryActions.get(category.id);
+
+    return {
+      label: t(`storageDialog.details.categories.${category.id}`, {
+        defaultValue: category.label,
+      }),
+      bytes: category.bytesUsed,
+      required: !category.clearable,
+      actionLabel: action?.label,
+      onAction: action?.onClick,
+      actionDisabled: category.clearable && category.bytesUsed === 0,
+    };
+  });
+
   return (
-    <Dialog
-      title={
-        storageTab === 'Available'
-          ? t('storageDialog.titleAvailable')
-          : t('storageDialog.titleUploading')
-      }
-      description={
-        storageTab === 'Available'
-          ? t('storageDialog.descAvailable')
-          : t('storageDialog.descUploading')
-      }
-      contentClassName="z-[200] top-[calc(env(safe-area-inset-top)+72px)] max-h-[calc(100dvh-env(safe-area-inset-top)-88px)] translate-y-0 gap-3 p-4 pb-0 sm:top-[50%] sm:max-h-[85vh] sm:translate-y-[-50%] sm:gap-4 sm:p-6 sm:pb-0"
-      width="min(720px, calc(100vw - 24px))"
-      open={open}
-      onOpenChange={onOpenChange}
-      onCancel={() => onOpenChange(false)}
-      footerSlot={<></>}
-    >
-      <Tabs
-        value={storageTab}
-        onValueChange={v => setStorageTab(v as 'Available' | 'Uploading')}
-        className="w-full"
-        size="sm"
-      >
-        <TabsList className="m-auto h-[32px] bg-(--bg-secondary)">
-          <TabsTrigger value="Available" className="h-[28px]">
-            {t('storageDialog.tabAvailable')}
-          </TabsTrigger>
-          <TabsTrigger value="Uploading" className="h-[28px]">
-            {t('storageDialog.tabUploading')}
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="Available">
-          <LoadingOverlay
-            visible={is('listStorageFiles')}
-            text={t('storageDialog.loadingFiles')}
-            className="absolute inset-0 z-10 pointer-events-none"
-            layout="col"
-          />
-
-          <div className="space-y-3 sm:space-y-4">
-            <div className="min-h-[180px] max-h-[260px] overflow-y-auto rounded-md border border-(--border-color) sm:min-h-[236px] sm:max-h-[350px]">
-              {files.length ? (
-                files.map((file, _index) => {
-                  try {
-                    // Only pass the fields that StorageFileItem expects
-                    const fileForItem = {
-                      filename: file.filename,
-                      size: file.size,
-                      incomplete: file.incomplete,
-                      state: file.state,
-                    };
-                    return (
-                      <StorageFileItem
-                        key={file.filename}
-                        file={fileForItem}
-                        selected={selected?.filename === file.filename}
-                        onSelect={onSelectImage}
-                        onContinueUpload={filename => onContinueUpload(filename, 0)}
-                        onDelete={handleDeleteFile}
-                      />
-                    );
-                  } catch (e) {
-                    console.error('StorageFileItem render error for file:', file, e);
-                    return (
-                      <div key={file.filename} className="p-2 border-b border-red-500 text-red-500">
-                        Error rendering {file.filename}: {String(e)}
-                      </div>
-                    );
-                  }
-                })
-              ) : (
-                <div className="flex min-h-[180px] max-h-[260px] items-center justify-center gap-2 p-4 text-sm sm:min-h-[236px] sm:max-h-[350px]">
-                  <div className="flex flex-col items-center">
-                    <IconCd className="size-8 opacity-80" />
-                    <span className="text-(--text-secondary)">{t('storageDialog.noFiles')}</span>
-                    <p className="text-text">{t('storageDialog.noFilesDesc')}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Mount as */}
-            <SelectMountAs
-              value={mountAs}
-              onChange={setMountAs}
-              rightSlot={
-                <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-                  <UploadDropZone
-                    showProgress={false}
-                    startMethod="startStorageFileUpload"
-                    httpUploadUrl={env.target === 'device' ? '/storage/upload' : ''}
-                    step="overview"
-                    className="mb-0 min-w-0 flex-1 border-dashed sm:flex-none"
-                    uploaderContainerClassName="cursor-pointer"
-                    resumeFileName=""
-                    source="storage"
-                    path="/"
-                    customUploadTrigger={
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            size="sm"
-                            className="btn-primary min-w-0 flex-1 cursor-pointer whitespace-nowrap sm:flex-none"
-                          >
-                            <Plus className="size-[16px] mr-0" />
-                            {t('storageDialog.uploadImageButton')}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">
-                          {t('storageDialog.uploadImageTooltip')}
-                        </TooltipContent>
-                      </Tooltip>
-                    }
-                    formatsText={
-                      <>
-                        <span className="font-medium">{t('storageDialog.formatsTypes')}</span>
-                      </>
-                    }
-                    idleText={
-                      <div className="flex flex-col items-center ">
-                        <Button className="rounded-[50%] w-[40px] h-[40px] mb-[10px] cursor-pointer">
-                          <Plus className="size-5 opacity-60" />
-                        </Button>
-
-                        <span>{t('storageDialog.idleText')}</span>
-                      </div>
-                    }
-                    draggingText={t('storageDialog.draggingText')}
-                    onSuccess={onSuccessUpload}
-                    onStart={onStartUpload}
-                    onResumeStart={onResumeStart}
-                    onProgress={onProgressUpload}
-                    onStateChange={onStateChange}
-                    rpc={rpc}
-                  >
-                    <Button className="w-full">
-                      {/*  onClick={() => setStorageTab('Uploading')} */}
-                      {t('storageDialog.uploadNewImage')}
-                    </Button>
-                  </UploadDropZone>
-                  <Button size="sm" className="min-w-[72px] flex-1 sm:flex-none" onClick={onBack}>
-                    {t('storageDialog.back')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    className="min-w-[72px] flex-1 sm:flex-none"
-                    loading={is('mount')}
-                    disabled={!selected || selected.incomplete}
-                    onClick={handleMount}
-                  >
-                    {t('storageDialog.mountFile')}
-                  </Button>
-                </div>
-              }
-            ></SelectMountAs>
-            {/* Storage usage */}
-          </div>
-          <StorageUsage
-            total={space?.total || 0}
-            used={space?.used || 0}
-            free={space ? Math.max(space.total - space.used, 0) : 0}
-            loading={is('ftFileSystemInfo')}
-            title={t('storageDialog.availableStorage')}
-            rightText={pct => t('storageDialog.usedPct', { pct })}
-            usedText={used => t('storageDialog.usedText', { used: humanSize(used) })}
-            freeText={free => t('storageDialog.freeText', { free: humanSize(free) })}
-            mountKey={storageTab}
-            className="mt-2"
-          />
-        </TabsContent>
-
-        <TabsContent value="Uploading">
-          {/* <DataTable
-            columns={uploadingColumns}
-            list={uploadingList}
-            rowKey="id"
-            className="text-sm mt-[var(--spacing-base)] [&_table]:table-fixed [&_table]:w-full"
-            scroll={{ x: 'max-content' }}
-            emptyProps={{
-              icon: <IconCd className="size-8 opacity-80" />,
-              title: t('storageDialog.noCurrentUploads'),
-              description: t('storageDialog.noCurrentUploadsDesc'),
-              className: 'py-14', // Optional: custom height/spacing
-            }}
-          /> */}
-          {/*   onPause={env.target !== 'device' ? handlePauseUpload : undefined} */}
-          <TransferList
-            list={uploadingList}
-            onPause={handlePauseUpload}
-            onRemove={handleDeleteUploadingRow}
-            onResume={handleResumeUpload}
-            // showActions={false}
-            emptyProps={{
-              icon: <IconCd className="size-8 opacity-80" />,
-              title: t('storageDialog.noCurrentUploads'),
-              description: t('storageDialog.noCurrentUploadsDesc'),
-              className: 'pt-14',
-            }}
-          />
-          <div className="flex items-center justify-end gap-2  py-(--spacing-base)">
-            <Button onClick={onBack}>{t('storageDialog.back')}</Button>
-          </div>
-          <UploadDropZone
-            ref={uploadDropZoneRef}
-            showProgress={false}
-            startMethod="startStorageFileUpload"
-            httpUploadUrl={env.target === 'device' ? '/storage/upload' : ''}
-            step="overview"
-            className="mb-0 m-0 border-dashed cursor-pointer"
-            resumeFileName=""
-            source="storage"
-            path="/"
-            formatsText={
-              <>
-                <span className="font-medium">{t('storageDialog.formatsTypes')}</span>
-              </>
-            }
-            idleText={
-              <div className="flex flex-col items-center">
-                <Button className="rounded-[50%] w-[40px] h-[40px] mb-[10px] cursor-pointer">
-                  <Plus className="size-5 opacity-60" />
-                </Button>
-
-                <span>{t('storageDialog.idleText')}</span>
-              </div>
-            }
-            draggingText={t('storageDialog.draggingText')}
-            onSuccess={onSuccessUpload}
-            onStart={onStartUpload}
-            onResumeStart={onResumeStart}
-            onProgress={onProgressUpload}
-            onStateChange={onStateChange}
-            onError={onError}
-            rpc={rpc}
+    <>
+      {open && !storageDetailsOpen && !deleteAllImagesOpen && !clearLogsConfirmOpen && (
+        <Dialog
+          title={
+            storageTab === 'Available'
+              ? t('storageDialog.titleAvailable')
+              : t('storageDialog.titleUploading')
+          }
+          description={
+            storageTab === 'Available'
+              ? t('storageDialog.descAvailable')
+              : t('storageDialog.descUploading')
+          }
+          contentClassName="z-[200] top-[calc(env(safe-area-inset-top)+72px)] max-h-[calc(100dvh-env(safe-area-inset-top)-88px)] translate-y-0 gap-3 p-4 pb-0 sm:top-[50%] sm:max-h-[85vh] sm:translate-y-[-50%] sm:gap-4 sm:p-6 sm:pb-0"
+          width="min(720px, calc(100vw - 24px))"
+          open={open}
+          onOpenChange={onOpenChange}
+          onCancel={() => onOpenChange(false)}
+          footerSlot={<></>}
+        >
+          <Tabs
+            value={storageTab}
+            onValueChange={v => setStorageTab(v as 'Available' | 'Uploading')}
+            className="w-full"
+            size="sm"
           >
-            <Button className="w-full cursor-pointer">
-              {/*  onClick={() => setStorageTab('Uploading')} */}
-              {t('storageDialog.uploadNewImage')}
-            </Button>
-          </UploadDropZone>
-        </TabsContent>
-      </Tabs>
-    </Dialog>
+            <TabsList className="m-auto h-[32px] bg-(--bg-secondary)">
+              <TabsTrigger value="Available" className="h-[28px]">
+                {t('storageDialog.tabAvailable')}
+              </TabsTrigger>
+              <TabsTrigger value="Uploading" className="h-[28px]">
+                {t('storageDialog.tabUploading')}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="Available">
+              <LoadingOverlay
+                visible={is('listStorageFiles')}
+                text={t('storageDialog.loadingFiles')}
+                className="absolute inset-0 z-10 pointer-events-none"
+                layout="col"
+              />
+
+              <div className="space-y-3 sm:space-y-4">
+                <div className="min-h-[180px] max-h-[260px] overflow-y-auto rounded-md border border-(--border-color) sm:min-h-[236px] sm:max-h-[350px]">
+                  {files.length ? (
+                    files.map((file, _index) => {
+                      try {
+                        // Only pass the fields that StorageFileItem expects
+                        const fileForItem = {
+                          filename: file.filename,
+                          size: file.size,
+                          incomplete: file.incomplete,
+                          state: file.state,
+                        };
+                        return (
+                          <StorageFileItem
+                            key={file.filename}
+                            file={fileForItem}
+                            selected={selected?.filename === file.filename}
+                            onSelect={onSelectImage}
+                            onContinueUpload={filename => onContinueUpload(filename, 0)}
+                            onDelete={handleDeleteFile}
+                          />
+                        );
+                      } catch (e) {
+                        logger.error('StorageFileItem render failed', e);
+                        return (
+                          <div
+                            key={file.filename}
+                            className="p-2 border-b border-red-500 text-red-500"
+                          >
+                            Error rendering {file.filename}: {String(e)}
+                          </div>
+                        );
+                      }
+                    })
+                  ) : (
+                    <div className="flex min-h-[180px] max-h-[260px] items-center justify-center gap-2 p-4 text-sm sm:min-h-[236px] sm:max-h-[350px]">
+                      <div className="flex flex-col items-center">
+                        <IconCd className="size-8 opacity-80" />
+                        <span className="text-(--text-secondary)">{t('storageDialog.noFiles')}</span>
+                        <p className="text-text">{t('storageDialog.noFilesDesc')}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Mount as */}
+                <SelectMountAs
+                  value={mountAs}
+                  onChange={setMountAs}
+                  rightSlot={
+                    <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+                      <UploadDropZone
+                        showProgress={false}
+                        startMethod="startStorageFileUpload"
+                        httpUploadUrl={env.target === 'device' ? '/storage/upload' : ''}
+                        step="overview"
+                        className="mb-0 min-w-0 flex-1 border-dashed sm:flex-none"
+                        uploaderContainerClassName="cursor-pointer"
+                        resumeFileName=""
+                        source="storage"
+                        path="/"
+                        customUploadTrigger={
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="sm"
+                                className="btn-primary min-w-0 flex-1 cursor-pointer whitespace-nowrap sm:flex-none"
+                              >
+                                <Plus className="size-[16px] mr-0" />
+                                {t('storageDialog.uploadImageButton')}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              {t('storageDialog.uploadImageTooltip')}
+                            </TooltipContent>
+                          </Tooltip>
+                        }
+                        formatsText={
+                          <>
+                            <span className="font-medium">{t('storageDialog.formatsTypes')}</span>
+                          </>
+                        }
+                        idleText={
+                          <div className="flex flex-col items-center ">
+                            <Button className="rounded-[50%] w-[40px] h-[40px] mb-[10px] cursor-pointer">
+                              <Plus className="size-5 opacity-60" />
+                            </Button>
+
+                            <span>{t('storageDialog.idleText')}</span>
+                          </div>
+                        }
+                        draggingText={t('storageDialog.draggingText')}
+                        onSuccess={onSuccessUpload}
+                        onStart={onStartUpload}
+                        onResumeStart={onResumeStart}
+                        onProgress={onProgressUpload}
+                        onStateChange={onStateChange}
+                        rpc={rpc}
+                      >
+                        <Button className="w-full">
+                          {/*  onClick={() => setStorageTab('Uploading')} */}
+                          {t('storageDialog.uploadNewImage')}
+                        </Button>
+                      </UploadDropZone>
+                      <Button size="sm" className="min-w-[72px] flex-1 sm:flex-none" onClick={onBack}>
+                        {t('storageDialog.back')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        className="min-w-[72px] flex-1 sm:flex-none"
+                        loading={is('mount')}
+                        disabled={!selected || selected.incomplete}
+                        onClick={handleMount}
+                      >
+                        {t('storageDialog.mountFile')}
+                      </Button>
+                    </div>
+                  }
+                ></SelectMountAs>
+                {/* Storage usage */}
+              </div>
+              <StorageUsage
+                totalBytes={storageDetails?.bytesTotal || 0}
+                usedBytes={storageDetails?.bytesUsed || 0}
+                freeBytes={storageDetails?.bytesFree || 0}
+                systemBytes={
+                  storageDetails?.categories.find(category => category.id === 'system')?.bytesUsed
+                }
+                logBytes={
+                  storageDetails?.categories.find(category => category.id === 'logs')?.bytesUsed
+                }
+                contentBytes={
+                  storageDetails?.categories.find(category => category.id === 'images')?.bytesUsed
+                }
+                contentType="images"
+                onOpenDetails={() => setStorageDetailsOpen(true)}
+                loading={is('getStorageDetails')}
+                title={t('storageDialog.availableStorage')}
+                rightText={pct => t('storageDialog.usedPct', { pct })}
+                usedText={used => t('storageDialog.usedText', { used: formatBytes(used) })}
+                freeText={free => t('storageDialog.freeText', { free: formatBytes(free) })}
+                mountKey={storageTab}
+                className="mt-2"
+              />
+            </TabsContent>
+
+            <TabsContent value="Uploading">
+              {/* <DataTable
+              columns={uploadingColumns}
+              list={uploadingList}
+              rowKey="id"
+              className="text-sm mt-[var(--spacing-base)] [&_table]:table-fixed [&_table]:w-full"
+              scroll={{ x: 'max-content' }}
+              emptyProps={{
+                icon: <IconCd className="size-8 opacity-80" />,
+                title: t('storageDialog.noCurrentUploads'),
+                description: t('storageDialog.noCurrentUploadsDesc'),
+                className: 'py-14', // Optional: custom height/spacing
+              }}
+            /> */}
+              {/*   onPause={env.target !== 'device' ? handlePauseUpload : undefined} */}
+              <TransferList
+                list={uploadingList}
+                onPause={handlePauseUpload}
+                onRemove={handleDeleteUploadingRow}
+                onResume={handleResumeUpload}
+                // showActions={false}
+                emptyProps={{
+                  icon: <IconCd className="size-8 opacity-80" />,
+                  title: t('storageDialog.noCurrentUploads'),
+                  description: t('storageDialog.noCurrentUploadsDesc'),
+                  className: 'pt-14',
+                }}
+              />
+              <div className="flex items-center justify-end gap-2  py-(--spacing-base)">
+                <Button onClick={onBack}>{t('storageDialog.back')}</Button>
+              </div>
+              <UploadDropZone
+                ref={uploadDropZoneRef}
+                showProgress={false}
+                startMethod="startStorageFileUpload"
+                httpUploadUrl={env.target === 'device' ? '/storage/upload' : ''}
+                step="overview"
+                className="mb-0 m-0 border-dashed cursor-pointer"
+                resumeFileName=""
+                source="storage"
+                path="/"
+                formatsText={
+                  <>
+                    <span className="font-medium">{t('storageDialog.formatsTypes')}</span>
+                  </>
+                }
+                idleText={
+                  <div className="flex flex-col items-center">
+                    <Button className="rounded-[50%] w-[40px] h-[40px] mb-[10px] cursor-pointer">
+                      <Plus className="size-5 opacity-60" />
+                    </Button>
+
+                    <span>{t('storageDialog.idleText')}</span>
+                  </div>
+                }
+                draggingText={t('storageDialog.draggingText')}
+                onSuccess={onSuccessUpload}
+                onStart={onStartUpload}
+                onResumeStart={onResumeStart}
+                onProgress={onProgressUpload}
+                onStateChange={onStateChange}
+                onError={onError}
+                rpc={rpc}
+              >
+                <Button className="w-full cursor-pointer">
+                  {/*  onClick={() => setStorageTab('Uploading')} */}
+                  {t('storageDialog.uploadNewImage')}
+                </Button>
+              </UploadDropZone>
+            </TabsContent>
+          </Tabs>
+        </Dialog>
+      )}
+      {storageDetailsOpen && !deleteAllImagesOpen && !clearLogsConfirmOpen && (
+        <StorageDetailsDialog
+          open={storageDetailsOpen}
+          onOpenChange={setStorageDetailsOpen}
+          title={t('storageDialog.details.title')}
+          typeLabel={t('storageDialog.details.type')}
+          usedLabel={t('storageDialog.details.used')}
+          requiredLabel={t('storageDialog.details.required')}
+          closeLabel={t('storageDialog.details.ok')}
+          note={t('storageDialog.details.systemNote')}
+          rows={storageRows}
+        />
+      )}
+      {clearLogsConfirmOpen && (
+        <StorageDeleteConfirmDialog
+          open={clearLogsConfirmOpen}
+          onOpenChange={setClearLogsConfirmOpen}
+          title={t('storageDialog.details.clearLogsTitle')}
+          description={t('storageDialog.details.clearLogsDescription')}
+          cancelLabel={t('storageDialog.cancel')}
+          confirmLabel={t('storageDialog.details.clearLogs')}
+          onConfirm={handleClearLogs}
+        />
+      )}
+      {deleteAllImagesOpen && (
+        <StorageDeleteConfirmDialog
+          open={deleteAllImagesOpen}
+          onOpenChange={setDeleteAllImagesOpen}
+          title={t('storageDialog.details.deleteImagesTitle')}
+          description={t('storageDialog.details.deleteImagesDescription')}
+          cancelLabel={t('storageDialog.cancel')}
+          confirmLabel={t('storageDialog.details.deleteAllImages')}
+          onConfirm={handleDeleteAllImages}
+        />
+      )}
+    </>
   );
 };
 

@@ -10,6 +10,7 @@
 import { normalizeUrl } from './common';
 import { env } from './env';
 import { VERSION_INFO } from './version';
+import { getSafeRedirectUrl } from './security';
 /**
  * Get path with version prefix.
  * Production cloud environment automatically prepends version number;
@@ -32,12 +33,14 @@ export function getVersionedPath(path: string): string {
 
 
 export function navigateWithVersion(path: string): void {
+  if (!path.startsWith('/') || !getSafeRedirectUrl(path)) return;
   const versionedPath = getVersionedPath(path);
   window.location.href = versionedPath;
 }
 
 
 export function replaceWithVersion(path: string): void {
+  if (!path.startsWith('/') || !getSafeRedirectUrl(path)) return;
   const versionedPath = getVersionedPath(path);
   window.location.replace(versionedPath);
 }
@@ -78,7 +81,16 @@ export async function redirectToIp(
   }
 
   const url = new URL(window.location.href);
-  url.hostname = ip;
+  // Device network changes are not OAuth redirects. Accept a host, never a URL.
+  if (!ip || /[\s/@?#\\%]/.test(ip)) return;
+  try {
+    const host = ip.includes(':') && !ip.startsWith('[') ? `[${ip}]` : ip;
+    const hostUrl = new URL(`http://${host}`);
+    if (hostUrl.port || hostUrl.username || hostUrl.password || hostUrl.pathname !== '/') return;
+    url.hostname = hostUrl.hostname;
+  } catch {
+    return;
+  }
   url.port = '';
   window.location.replace(url.toString());
 }

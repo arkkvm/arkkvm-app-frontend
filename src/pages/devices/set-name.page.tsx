@@ -11,6 +11,7 @@ import { request } from '@/api';
 import { Button, Input, WelcomeBackground } from '@/components';
 
 import { parseVersions } from '@/utils/parse';
+import { normalizeDeviceId } from '@/utils/security';
 import React, { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 export const meta = {
@@ -19,7 +20,8 @@ export const meta = {
   target: 'cloud',
 };
 export default function setName() {
-  const { id } = useParams();
+  const { id: rawId } = useParams();
+  const id = normalizeDeviceId(rawId);
 
    const navigate = useNavigate();
   const [name, setName] = useState('');
@@ -39,6 +41,7 @@ export default function setName() {
     setName(event.target.value);
   };
   const submitHandle = useCallback(async () => {
+    if (!id) { navigate('/devices/list', { replace: true }); return; }
     const newErrors = validate();
     setErrors({});
     if (Object.keys(newErrors).length) {
@@ -49,11 +52,11 @@ export default function setName() {
         const { data } = await request.get(`/devices/${id}`);
         const deviceData = data as { cloudVersion?: unknown } | undefined;
         const cloudVersion = parseVersions(deviceData?.cloudVersion);
-        const targetUrl = `/${cloudVersion }/device/${id}?deviceName=${name}`;
+        const targetUrl = `/${encodeURIComponent(cloudVersion || 'v-default')}/device/${encodeURIComponent(id)}?deviceName=${encodeURIComponent(name)}`;
         navigate(targetUrl,{ replace: true });
       }
     }
-  }, [name]);
+  }, [name, id, navigate]);
   return (
     <WelcomeBackground
       title="Name Your Device"

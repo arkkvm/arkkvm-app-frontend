@@ -1,6 +1,5 @@
 import { IconK, IconLogo, IconM, IconR, IconV } from '@/assets/icons';
 import { cn } from '@/lib/utils';
-import { useAppStore } from '@/stores';
 import React from 'react';
 
 export type BrandLogoProps = {
@@ -21,7 +20,7 @@ export type BrandLogoProps = {
 /**
  * BrandLogo
  * - Supports icon-only or full logo (icon + wordmark)
- * - Light/Dark variants, with optional auto-detect based on `document.documentElement.classList` (expects 'light'/'dark')
+ * - Uses the surrounding theme's text color, including locally themed pages.
  */
 export const BrandLogo: React.FC<BrandLogoProps> = ({
   type = 'full',
@@ -30,9 +29,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   className,
   style,
 }) => {
-  const theme = useAppStore(state => state.currentTheme);
-
-  const mainColor = primaryColor ?? (theme === 'light' ? '#0A0A0A' : '#FFFFFF');
+  const mainColor = primaryColor ?? 'var(--text-color)';
   const letterPx = Math.max(12, Math.round(size));
   const iconPx = size + 6;
 
@@ -40,7 +37,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   const letterStyle: React.CSSProperties = { width: letterPx, height: letterPx, flexShrink: 0 };
 
   if (type === 'icon') {
-    return <IconLogo className={cn('brand-logo-icon', className)} style={{ ...iconStyle, ...style }} />;
+    return <IconLogo className={cn('brand-logo-icon', className)} style={{ ...iconStyle, color: mainColor, ...style }} />;
   }
 
   return (

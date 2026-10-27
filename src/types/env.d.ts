@@ -16,6 +16,8 @@ interface ImportMetaEnv {
 
   readonly RSB_API_BASE_URL_CLOUD?: string
   readonly RSB_APP_BASE_URL_CLOUD?: string
+  readonly RSB_API_BASE_URL_CLOUD_CN?: string
+  readonly RSB_APP_BASE_URL_CLOUD_CN?: string
   readonly MODE: string
   readonly PROD: boolean
   readonly DEV: boolean

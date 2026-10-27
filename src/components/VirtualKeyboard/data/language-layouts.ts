@@ -124,7 +124,6 @@ export function getLanguageLayoutMeta(id: string): LayoutMeta | undefined {
  * Get layout module by language ID.
  */
 export function getLanguageLayoutModule(id: string): LanguageLayoutModule | undefined {
-  //console.log('id',id,languageLayoutModuleMap)
   return languageLayoutModuleMap[id];
 }
 

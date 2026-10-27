@@ -366,6 +366,12 @@
       "1hour": "1 小时"
     },
     "usb": {
+      "applied": "USB 设备配置已应用",
+      "fullSpeed": {
+        "title": "旧版 USB 兼容模式",
+        "desc": "将 USB 限制为 Full Speed，以更好地兼容部分较旧的系统和 BIOS 环境。这可能会降低 USB 传输速度。",
+        "warning": "更改 USB 速度会使 USB 设备短暂断开。"
+      },
       "title": "USB 设备",
       "desc": "在目标计算机上模拟的 USB 设备",
       "classes": {
@@ -591,6 +597,29 @@
     }
   },
   "advanced": {
+    "mcp": {
+      "title": "MCP",
+      "experimental": "实验性",
+      "desc": "允许兼容 MCP 的智能体控制 ArkKVM。"
+    },
+    "forwarding": {
+      "saving": "正在应用更改…",
+      "title": "网络服务转发",
+      "desc": "允许 MCP 智能体连接被控计算机上的网络服务，例如 SSH 和 Web API。",
+      "warning": "启用网络服务转发会停用相对鼠标和麦克风模拟。",
+      "confirmTitle": "启用网络服务转发？",
+      "confirmDescription": [
+        "网络服务转发允许 AI 智能体通过 ArkKVM 连接被控计算机上的网络服务，例如 SSH 和 Web API。",
+        "此功能需要 ArkKVM 模拟 USB 网络适配器（网卡）。由于 USB 设备数量限制，启用网络服务转发将停用<strong>相对鼠标</strong>和<strong>麦克风模拟</strong>。",
+        "如需再次使用这些功能，请关闭网络服务转发并重新启用它们。"
+      ],
+      "enable": "启用",
+      "cancel": "取消",
+      "ok": "确定",
+      "blocked": "网络服务转发已启用。请先关闭网络服务转发再修改此设置。",
+      "unavailable": "无法确认 MCP 和网络服务转发设置。请重新进入此页面重试。",
+      "usbUnavailable": "无法确认 USB 设置。请重新进入此页面重试。"
+    },
     "webTerminal": {
       "title": "Web Terminal",
       "desc": "通过 Web 界面启用 Shell 访问"
@@ -714,9 +743,11 @@
       "title": "云服务提供商",
       "desc": "为您的设备选择云服务提供商",
       "arkkvm": "ArkKVM 云",
+      "arkkvmChina": "ArkKVM 云（中国）",
       "custom": "自定义"
     },
     "cloudSecurity": {
+      "chinaNotice": "在中国大陆部署的 ArkKVM 设备，请使用 <strong>ArkKVM 云（中国）</strong>。",
       "title": "云安全",
       "feature1": "使用 WebRTC 的端到端加密（DTLS 和 SRTP）",
       "feature2": "零信任安全模型",

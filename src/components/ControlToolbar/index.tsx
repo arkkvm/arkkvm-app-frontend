@@ -430,7 +430,6 @@ export default memo(function ControlToolbar({
             <PopoverContent
               sideOffset={8}
               align="start"
-              onOpenAutoFocus={e => e.preventDefault()}
               className="w-[calc(100vw-24px)] bg-transparent border-transparent p-0 shadow-none sm:w-[750px]"
             >
               <VirtualUsbDrive

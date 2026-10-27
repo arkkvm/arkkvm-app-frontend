@@ -19,15 +19,17 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { StatusCard } from './StatusCard';
+import { LanguageSwitcher } from '../settings/LanguageSwitcher';
 
 import { useJsonRpc } from '@/hooks/useJsonRpc';
 import { useLoadingMap } from '@/hooks/useLoading';
 import { useAppStore } from '@/stores/';
+import type { UserInfo } from '@/stores/slices/userSlice';
 import { getStatusColor } from '@/ui/statusColors';
 import { env } from '@/utils/env';
+import { getSafeExternalUrl } from '@/utils/security';
 import { useCallback, useEffect, useState, type MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 import type { USBStates } from '@/i18n/usb';
 import type { PeerStates } from '@/i18n/rtc';
 import BrandLogo from '../ui/brand-logo';
@@ -40,8 +42,23 @@ interface link {
   href: string;
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
 }
+
+// Provider display names for the identity label next to the account email
+// (doc 14 §4 /me.identities): same email on different providers must stay
+// distinguishable. Unknown providers fall back to their raw id.
+const PROVIDER_LABELS: Record<string, string> = {
+  google: 'Google',
+  github: 'GitHub',
+  microsoft: 'Microsoft',
+  wechat: 'WeChat',
+  apple: 'Apple',
+};
+
 interface ITopNavbar {
   links?: link[];
+  showLinks?: boolean;
+  account?: Pick<UserInfo, 'email' | 'displayName' | 'identities' | 'picture' | 'provider'> | null;
+  onLogout?: () => void | Promise<void>;
   showDeviceStatus?: boolean;
   deviceName?: string;
   hostname?: string;
@@ -55,8 +72,29 @@ interface ITopNavbar {
   onReconnect?: (countdown?: number) => void;
 }
 
+function AccountAvatar({ src, name }: { src: string | null; name: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span aria-hidden="true" className="relative flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-accent text-sm font-medium text-accent-foreground">
+      {Array.from(name)[0]}
+      {src && !failed && (
+        <img
+          src={src}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 size-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      )}
+    </span>
+  );
+}
+
 export default function TopNavbar({
   links = [],
+  showLinks = true,
+  account,
+  onLogout,
   showDeviceStatus,
   deviceName = 'ArkKVM Device',
   hostname,
@@ -69,7 +107,6 @@ export default function TopNavbar({
   onMinimizeClick,
   onReconnect,
 }: ITopNavbar) {
-  const navigate = useNavigate();
   const controlLayoutMode = useAppStore(s => s.ui.controlLayoutMode);
   const setControlLayoutMode = useAppStore(s => s.ui.setControlLayoutMode);
 
@@ -84,22 +121,43 @@ export default function TopNavbar({
   const peerLabel = getPeerStateLabel(peerState as PeerStates, currentLang);
   const getUserInfo = useAppStore(s => s.getUserInfo);
   const logout = useAppStore(s => s.logout);
-  const userData = useAppStore(s => s.userInfo);
+  const storedUserData = useAppStore(s => s.userInfo);
+  const userData = account === undefined ? storedUserData : account;
+  const providers = userData?.provider?.trim()
+    ? [userData.provider.trim()]
+    : (userData?.identities ?? []).map(identity => identity.provider);
+  const identityLabel = [...new Set(providers)]
+    .map(provider => PROVIDER_LABELS[provider] ?? provider)
+    .join(' / ');
+  const fallbackProviderLabel = providers
+    .map(provider => PROVIDER_LABELS[provider])
+    .filter(Boolean)
+    .join(' / ');
+  const accountLabel =
+    userData?.displayName?.trim() ||
+    userData?.identities?.find(identity => identity.displayName?.trim())?.displayName?.trim() ||
+    userData?.email?.trim() ||
+    userData?.identities?.find(identity => identity.email?.trim())?.email?.trim() ||
+    (userData
+      ? fallbackProviderLabel
+        ? t('accountDisplay.providerUser', { provider: fallbackProviderLabel })
+        : t('accountDisplay.user')
+      : '');
+  const avatarUrl = getSafeExternalUrl(userData?.picture) ||
+    userData?.identities?.map(identity => getSafeExternalUrl(identity.avatarUrl)).find(Boolean) || null;
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const { isLoading, startLoading, stopLoading } = useLoadingMap(['reboot']);
   useEffect(() => {
-    if (!showLoggedIn) return;
+    if (!showLoggedIn || account !== undefined) return;
 
     getUserInfo();
 
     return () => {};
-  }, [showLoggedIn, getUserInfo]);
+  }, [showLoggedIn, getUserInfo, account]);
   const logoutHandle = useCallback(async () => {
-    const res = await logout();
-    if (res) {
-      navigate('/');
-    }
-  }, [logout]);
+    if (onLogout) await onLogout();
+    else await logout();
+  }, [logout, onLogout]);
   const rebootDevice = useCallback(async () => {
     if (!isChannelReady) return;
     startLoading('reboot');
@@ -136,7 +194,7 @@ export default function TopNavbar({
       <div className="flex items-center">
         <BrandLogo type={brandLogoType} size={24} />
 
-        {env.target === 'cloud' && (
+        {showLinks && env.target === 'cloud' && (
           <div className="flex-1 flex flex-row items-center gap-[15px] ml-[24px]">
             {links.map(({ title, href, Icon }, i) => {
               return (
@@ -153,7 +211,9 @@ export default function TopNavbar({
           </div>
         )}
         {hostname && (
-          <span className="ml-2 max-w-[90px] truncate text-[16px] sm:ml-[16px] sm:max-w-[120px] sm:text-[18px]">{hostname}</span>
+          <span className="ml-2 max-w-[90px] truncate text-[16px] sm:ml-[16px] sm:max-w-[120px] sm:text-[18px]">
+            {hostname}
+          </span>
         )}
       </div>
       <div className="flex items-center">
@@ -255,29 +315,44 @@ export default function TopNavbar({
 
         {showLoggedIn && (
           <div className="min-auto pl-[24px] flex items-center justify-start">
+            {(env.target === 'cloud' || account !== undefined) && (
+              <>
+                <LanguageSwitcher bordered={false} showIcon />
+                <span
+                  aria-hidden="true"
+                  className="mx-3 h-4 shrink-0 border-l border-(--border-color)"
+                />
+              </>
+            )}
             <div className="flex h-[32px] flex-row">
-              {/* <img
-                src={picture}
-                className="w-[32px] h-[32px] rounded-[50%] object-cover border border-[var(--border-color)]"
-              /> */}
-              {userData?.email ? (
-                <div className="text-[16px] min-w-[130px] pl-[10px] leading-[32px] max-w-[100px] overflow-hidden text-ellipsis">
-                  {userData?.email}
+              {accountLabel ? (
+                <div className="flex items-center min-w-0 max-w-[320px] pl-[10px] gap-[6px]">
+                  <AccountAvatar key={avatarUrl} src={avatarUrl} name={accountLabel} />
+                  <span className="text-[16px] leading-[32px] truncate">{accountLabel}</span>
+                  {identityLabel ? (
+                    <span className="shrink-0 text-[12px] leading-[32px] text-[var(--inactive-text-color)]">
+                      {identityLabel}
+                    </span>
+                  ) : null}
                 </div>
               ) : (
                 <></>
               )}
 
-              <div className="flex w-[20px] items-center justify-center">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <IconDown></IconDown>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={logoutHandle}>{t('login.logout')}</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+              {(account === undefined || onLogout) && (
+                <div className="flex w-[20px] items-center justify-center">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <IconDown></IconDown>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={logoutHandle}>
+                        {t('login.logout')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
             </div>
           </div>
         )}

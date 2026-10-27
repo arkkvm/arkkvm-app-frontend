@@ -88,10 +88,10 @@ export default function UsbDeviceSetting({
             {renderDevicesNode}
               <div className="flex gap-2 mt-[10px] ml-[20px]  pb-[16px]  justify-end">
 
-              <Button size="xs" onClick={onRefresh} disabled={!!loading||saving} >
+              <Button size="xs" onClick={onRefresh} disabled={disabled || !!loading || saving} >
                 {t('settings:common.refresh', 'Refresh')}
               </Button>
-               <Button onClick={onUpdate}  variant="primary" size="xs" loading={saving} disabled={!!saving}>
+               <Button onClick={onUpdate}  variant="primary" size="xs" loading={saving} disabled={disabled || !!saving}>
               {t('settings:common.update', 'Apply Changes')}
               </Button>
             </div>

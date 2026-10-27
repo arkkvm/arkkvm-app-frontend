@@ -21,7 +21,6 @@ const overrideVersion = (args[1] || process.env.VERSION || '').trim()
 
 const envFilePath = path.join(root, `.env.${envName}`)
 
-console.log('build context', process.env.npm_lifecycle_script, overrideVersion)
 // Read current version prefix from .env file
 function getVersionPrefix(filePath: string): string {
   try {
@@ -62,9 +61,9 @@ function generateVersion(prefix: string): string {
         if (lastPrefix === prefix && suffix.length >= 8) {
           const lastDate = suffix.slice(0, 6)
           const lastSeqStr = suffix.slice(6)
-          if (lastDate === dateCode && lastSeqStr.length === 2) {
+          if (lastDate === dateCode && /^\d{2,}$/.test(lastSeqStr)) {
             const lastSeq = Number(lastSeqStr)
-            if (!Number.isNaN(lastSeq)) {
+            if (Number.isSafeInteger(lastSeq) && lastSeq < Number.MAX_SAFE_INTEGER) {
               seq = lastSeq + 1
             }
           }

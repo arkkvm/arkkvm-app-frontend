@@ -40,7 +40,34 @@
     "continueUploading": "继续上传",
     "uploadImageButton": "上传镜像",
     "uploadImageTooltip": "请选择上次上传的镜像文件",
-    "resumeFallback": "请重新选择文件以继续上传"
+    "resumeFallback": "请重新选择文件以继续上传",
+    "details": {
+      "categories": {
+        "system": "系统数据",
+        "logs": "日志",
+        "images": "镜像"
+      },
+      "title": "存储详情",
+      "type": "类型",
+      "used": "已使用",
+      "required": "必需",
+      "ok": "确定",
+      "systemData": "系统数据",
+      "logs": "日志",
+      "images": "镜像",
+      "clearLogs": "清除日志",
+      "clearLogsTitle": "清除所有日志？",
+      "clearLogsDescription": "这将永久删除 ArkKVM 中的所有日志。此操作无法撤销。",
+      "logsCleared": "日志已清除。",
+      "clearLogsFailed": "清除日志失败，请重试。",
+      "clearImages": "清除镜像",
+      "systemNote": "系统数据是 ArkKVM 运行所必需的，无法删除。",
+      "deleteImagesTitle": "删除所有镜像？",
+      "deleteImagesDescription": "这将永久删除 Virtual Media 中的所有镜像。此操作无法撤销。",
+      "deleteAllImages": "删除所有镜像",
+      "imagesDeleted": "已成功删除所有镜像。",
+      "imagesDeleteFailed": "删除所有镜像失败，请重试。"
+    }
   },
   "urlMount": {
     "imageUrlLabel": "镜像 URL",

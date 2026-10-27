@@ -10,6 +10,9 @@
 // ============================================================================
 // External Dependencies
 // ============================================================================
+import { createLogger } from '@/utils/logger';
+import { normalizeDeviceId } from '@/utils/security';
+import { getCloudDeviceVersionUrl } from '@/utils/cloudDeviceVersion';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   useCallback,
@@ -50,6 +53,8 @@ import {
   VlanPendingConfirmDialog,
   XtermTerminal,
 } from '@/components';
+import { ControlLeaseDialog } from '@/components/kvm/ControlLease/ControlLeaseDialog';
+import { useControlLease } from '@/components/kvm/ControlLease/useControlLease';
 import TopNavbar from '@/components/TopNavbar/TopNavbar';
 import ControlToolbar, { type FullScreenData } from '@/components/ControlToolbar';
 import { DefaultLoadingOverlay } from '@/components/DefaultLoadingOverlay';
@@ -100,6 +105,8 @@ import {
 import type { PageMeta } from '@/types/page-meta';
 import { cn } from '@/utils';
 
+const logger = createLogger('DevicePage');
+
 // ============================================================================
 // Page Metadata
 // ============================================================================
@@ -141,7 +148,8 @@ interface _DeviceConnectionState {
 const KVMControlPage = () => {
   const { target, signalingUrl } = env;
   const [keyboardDisplayMode, setKeyboardDisplayMode] = useState<'docked' | 'floating'>('docked');
-  const { id: deviceId } = useParams();
+  const { id: rawDeviceId } = useParams();
+  const deviceId = normalizeDeviceId(rawDeviceId) || undefined;
   const location = useLocation();
 
   // Get deviceName from URL query parameter
@@ -165,6 +173,11 @@ const KVMControlPage = () => {
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
   const [showSessionConflictDialog, setShowSessionConflictDialog] = useState(false);
+  // Latched once the device hands this window's session to another client
+  // (`otherSessionConnected`). While set, no automatic path may reconnect: retaking the
+  // session without an explicit user choice kicks the other window, which would retake it
+  // in turn, and the two windows would keep fighting over the session.
+  const sessionPreemptedRef = useRef(false);
   const showStatusBar = useAppStore(s => s.showStatusBar);
 
   const keyboardHeight = useUiStore(s => s.keyboardHeight);
@@ -200,9 +213,11 @@ const KVMControlPage = () => {
 
   const csrfToken = sessionStorage.getItem('csrfToken') || '';
   const serverUrl =
-    target === 'cloud'
-      ? `${signalingUrl}?id=${deviceId}&token=${token}`
-      : `${signalingUrl}${csrfToken ? `?csrf-token=${csrfToken}` : ''}`;
+    (rawDeviceId !== undefined || target === 'cloud') && !deviceId
+      ? ''
+      : target === 'cloud'
+        ? `${signalingUrl}?id=${encodeURIComponent(deviceId || '')}&token=${encodeURIComponent(token || '')}`
+        : `${signalingUrl}${csrfToken ? `?csrf-token=${encodeURIComponent(csrfToken)}` : ''}`;
   const isPasteTextOpen = useUiStore(s => s.isPasteTextOpen);
   const keyboardLanguage = useAppStore(s => s.keyboardLanguage) || 'en-US-qwerty';
   const currentLang = useAppStore(s => s.currentLang);
@@ -328,6 +343,12 @@ const KVMControlPage = () => {
 
   const reconnectWithGuard = useCallback(
     async (options?: { delayMs?: number; onAfterEnable?: () => void }) => {
+      // A session taken over by another client is not ours to retake until the user says
+      // so (see the `otherSessionConnected` handler). Every automatic reconnect path —
+      // post-update overlay, restart countdown, network-change redirect — funnels through
+      // here, so this one guard covers them all.
+      if (sessionPreemptedRef.current) return;
+
       if (target === 'device' && !deviceId) {
         const localReady = await checkLocalDeviceSetup({ enableWs: false });
         if (!localReady) {
@@ -402,10 +423,20 @@ const KVMControlPage = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (useAppStore.getState() as any).setHidKeysDownState ?? useAppStore.getState().setKeysDownState;
   const controlLayoutMode = useAppStore(s => s.ui.controlLayoutMode);
+  const rpcDataChannel = useAppStore(s => s.rtc.rpcDataChannel);
+  const controlLease = useControlLease(rpcDataChannel);
   const [send, isChannelReady, sendAsync] = useJsonRpc((request: JsonRpcRequest<MethodName>) => {
     const { method, params } = request;
+    if (controlLease.onNotification(method, params)) {
+      return;
+    }
+
     switch (method) {
       case 'otherSessionConnected': {
+        // Latch first: the teardown below unmounts <RemoteScreen>, and the effects that
+        // could reconnect run off this state, so it must be set before anything else.
+        sessionPreemptedRef.current = true;
+        controlLease.reset();
         // Close all panels, popovers, dialogs and overlays before showing the conflict dialog
         useAppStore.getState().ui.closeAllPanels();
         useAppStore.getState().ui.setIsPasteTextOpen(false);
@@ -418,7 +449,16 @@ const KVMControlPage = () => {
         // Close all confirm dialogs (DHCP renew, network settings, etc.)
         closeAllConfirmDialogs();
         setShowSessionConflictDialog(true);
+        // Stop the connection instead of letting it come back on its own. `disconnect()`
+        // alone is not enough: it only suppresses the socket's close-triggered retry, while
+        // react-use-websocket's `retryOnError` path ignores `shouldReconnect`, and the
+        // hook's own WebRTC retry effect stays armed. Dropping `allowWebSocketConnection`
+        // unmounts <RemoteScreen> and disposes the whole hook — socket, PeerConnection and
+        // both retry timers. The connection is only rebuilt once the user confirms the
+        // dialog above.
         remoteScreenRef.current?.disconnect?.();
+        resetRTC();
+        setAllowWebSocketConnection(false);
         break;
       }
       case 'usbState': {
@@ -587,12 +627,16 @@ const KVMControlPage = () => {
     }
   };
   useEffect(() => {
+    if (rawDeviceId !== undefined && !deviceId) {
+      navigate('/devices/list', { replace: true });
+      return;
+    }
     if (deviceId) {
       getIceConfig();
     } else {
       checkLocalDeviceSetup();
     }
-  }, [deviceId]);
+  }, [deviceId, rawDeviceId, navigate]);
 
   useEffect(() => {
     snapshotVideoRef.current = remoteScreenRef.current?.videoElement ?? null;
@@ -677,7 +721,8 @@ const KVMControlPage = () => {
       uiSwitchResult,
       audioPlaybackResult,
       usbDevicesResult,
-    ]: [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown] = await Promise.all(
+      mcpEnabledResult,
+    ]: [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown] = await Promise.all(
       [
         sendAsync({ method: 'getCameraEmulation' }, { resultOnly: true }).catch(e => e),
         sendAsync({ method: 'getMicrophoneEmulation' }, { resultOnly: true }).catch(e => e),
@@ -687,10 +732,19 @@ const KVMControlPage = () => {
         sendAsync({ method: 'getUiSwitch' }, { resultOnly: true }),
         sendAsync({ method: 'getAudioPlayback' }, { resultOnly: true }),
         sendAsync({ method: 'getUsbDevices' }, { resultOnly: true }),
+        sendAsync({ method: 'getMcpEnabled' }, { resultOnly: true }).catch(() => undefined),
       ]
     );
+    if (target === 'cloud' && deviceId) {
+      const url = getCloudDeviceVersionUrl(window.location.href, deviceId, systemVersionResult);
+      if (url) {
+        window.location.replace(url);
+        return;
+      }
+    }
     setNestedDeviceSetting(prev => ({
       ...prev,
+      mcpEnabled: typeof mcpEnabledResult === 'boolean' ? mcpEnabledResult : undefined,
       microphoneEmulation: microphoneEmulation as boolean,
       cameraEmulation: cameraEmulation as boolean,
       fileTransfer: fileTransfer as boolean,
@@ -702,7 +756,7 @@ const KVMControlPage = () => {
         ? ({ ...defaultUsbDeviceConfig, ...(usbDevicesResult as object) } as UsbDeviceConfig)
         : undefined,
     }));
-  }, [sendAsync, isChannelReady]);
+  }, [sendAsync, isChannelReady, target, deviceId]);
   const getVideoStateAsyn = useCallback(async () => {
     if (!isChannelReady) {
       return;
@@ -842,7 +896,7 @@ const KVMControlPage = () => {
           // Silently ignore: either non-HTTPS or unsupported browser
         });
     } catch (error) {
-      console.error('Fullscreen request failed:', error);
+      logger.error('Fullscreen request failed:', error);
     }
   };
 
@@ -854,7 +908,7 @@ const KVMControlPage = () => {
         setIsFullScreen(false);
       }
     } catch (error) {
-      console.error('Exit fullscreen failed:', error);
+      logger.error('Exit fullscreen failed:', error);
     }
   };
 
@@ -884,11 +938,9 @@ const KVMControlPage = () => {
 
       // Calculate time between last key up and current key down
       // if (isFirstKeyDown) {
-      //   console.log(`down:${key}`, 0);
       //   isFirstKeyDown = false;
       // } else if (lastKeyUpTime > 0) {
       //   const interval = Date.now() - lastKeyUpTime;
-      //   console.log(`down:${key}`, interval);
       // }
       // When any popup/panel is open, don't forward keyboard to remote
       const isAnyUiPanelOpenState = isAnyUiPanelOpen();
@@ -931,6 +983,13 @@ const KVMControlPage = () => {
         ) {
           return;
         }
+      }
+
+      // A forwarded Tab must not move local focus into an ignored UI element,
+      // otherwise its key-up would be filtered and the remote key stays down.
+      if (event.code === 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
       }
 
       // Prevent Ctrl+A from selecting all content in the local browser;
@@ -1486,7 +1545,7 @@ const KVMControlPage = () => {
   );
 
   const handleDoubleClick = useCallback(
-    (_button: number, x: number, y: number, source: 'mouse' | 'touch') => {
+    async (_button: number, x: number, y: number, source: 'mouse' | 'touch') => {
       // Touch double-tap (touch source) does not trigger synthetic mouse double-click: native tap semantics differ from mouse double-click
       if (source === 'mouse') return;
 
@@ -1507,6 +1566,10 @@ const KVMControlPage = () => {
         doubleClickTimersRef.current.add(timer);
         return timer;
       };
+      const waitForNextReport = (delay: number) =>
+        new Promise<void>(resolve => {
+          createTrackedTimeout(resolve, delay);
+        });
 
       try {
         const fallbackPos =
@@ -1515,21 +1578,18 @@ const KVMControlPage = () => {
 
         // First click
         sendAbsMouseReport({ x: currentPos.x, y: currentPos.y, buttons: 1 });
-        createTrackedTimeout(() => {
-          sendAbsMouseReport({ x: currentPos.x, y: currentPos.y, buttons: 0 });
-          createTrackedTimeout(() => {
-            sendAbsMouseReport({ x: currentPos.x, y: currentPos.y, buttons: 1 });
-            createTrackedTimeout(() => {
-              sendAbsMouseReport({
-                x: currentPos.x,
-                y: currentPos.y,
-                buttons: 0,
-              });
-            }, 50);
-          }, 50);
-        }, 50);
+        await waitForNextReport(50);
+        sendAbsMouseReport({ x: currentPos.x, y: currentPos.y, buttons: 0 });
+        await waitForNextReport(50);
+        sendAbsMouseReport({ x: currentPos.x, y: currentPos.y, buttons: 1 });
+        await waitForNextReport(50);
+        sendAbsMouseReport({
+          x: currentPos.x,
+          y: currentPos.y,
+          buttons: 0,
+        });
       } catch (error) {
-        console.error('Double click error:', error);
+        logger.error('Double click error:', error);
       }
     },
     [sendAbsMouseReport]
@@ -1769,7 +1829,7 @@ const KVMControlPage = () => {
                       fillParent={false}
                     >
                       <RemoteScreen
-                        className="w-full  flex items-center justify-center"
+                        className="w-full flex items-center justify-center"
                         ref={remoteScreenRef}
                         isCursorHidden={hideCursor}
                         cursorStyle={cursorStyle}
@@ -2050,6 +2110,21 @@ const KVMControlPage = () => {
             <SessionStatusBar videoRef={mouseVideoRef} peerState={peerState} />
           )}
 
+          <ControlLeaseDialog
+            prompt={showSessionConflictDialog ? null : controlLease.prompt}
+            busy={controlLease.busy}
+            error={controlLease.error}
+            onAction={action => {
+              void controlLease.act(action, sendAsync);
+            }}
+            onViewOnly={() => {
+              if (controlLease.prompt?.kind === 'request' && controlLease.error !== 'stale') {
+                void controlLease.act('grantControl', sendAsync);
+              } else {
+                controlLease.reset();
+              }
+            }}
+          />
           {/* Session Conflict Dialog */}
           <Dialog
             open={showSessionConflictDialog}
@@ -2058,9 +2133,12 @@ const KVMControlPage = () => {
             description={t('session.active.desc')}
             confirmText={t('session.active.use_here')}
             showCancel={false}
+            preventOutsideClose
             width="600px"
             contentClassName="z-[9999] pb-0"
             onConfirm={() => {
+              // The user's explicit consent is the only thing that re-arms reconnection.
+              sessionPreemptedRef.current = false;
               setShowSessionConflictDialog(false);
               void reconnectWithGuard();
             }}

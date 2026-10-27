@@ -8,6 +8,7 @@
  * @LastEditTime: 2025-07-21 16:14:53
  */
 import { cn } from '@/lib/utils';
+import { ReactComponent as LanguageIcon } from '@/assets/icons/Language.svg';
 import { useGlobalSettingsStore } from '@/stores';
 import { createLogger } from '@/utils/logger';
 import React from 'react';
@@ -24,10 +25,14 @@ const logger = createLogger('LanguageSwitcher');
 
 interface LanguageSwitcherProps {
   className?: string
+  bordered?: boolean
+  showIcon?: boolean
 }
 
 export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({
   className,
+  bordered = true,
+  showIcon = false,
 }) => {
   const { currentLang, supportedLanguages, setLanguage } =
     useGlobalSettingsStore();
@@ -76,13 +81,22 @@ export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({
 
   return (
     <Select
-      className={cn(className)}
       size="xs"
       value={selectedLang}
       onValueChange={handleLanguageChange}
     >
-      <SelectTrigger className="w-full" aria-label={t('selectLanguage')}>
-        <SelectValue placeholder={t('selectLanguage')} />
+      <SelectTrigger
+        className={cn(
+          'w-full',
+          !bordered && 'w-auto border-0 shadow-none dark:bg-transparent dark:hover:bg-transparent [&>svg:last-child]:hidden',
+          className
+        )}
+        aria-label={t('selectLanguage')}
+      >
+        <span className="flex items-center gap-2">
+          {showIcon && <LanguageIcon className="size-4" aria-hidden="true" />}
+          <SelectValue placeholder={t('selectLanguage')} />
+        </span>
       </SelectTrigger>
       <SelectContent>
         {supportedLanguages.map(lang => (

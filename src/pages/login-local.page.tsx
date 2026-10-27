@@ -46,6 +46,7 @@ const WelcomeSetPasswordPage: React.FC = () => {
   const [isAccountLocked, setIsAccountLocked] = useState(false);
   const [lockTimeRemaining, setLockTimeRemaining] = useState(0);
   const lockTimerRef = useRef<number | null>(null);
+  const loginPendingRef = useRef(false);
 
   const schema = useMemo(
     () =>
@@ -155,6 +156,7 @@ const WelcomeSetPasswordPage: React.FC = () => {
 
   const onSubmit = useCallback(
     async (data: FormData) => {
+      if (loginPendingRef.current) return;
       if (isAccountLocked) {
         form.setError('password', {
           type: 'manual',
@@ -165,20 +167,35 @@ const WelcomeSetPasswordPage: React.FC = () => {
         return;
       }
 
+      loginPendingRef.current = true;
       setIsLoading(true);
-      const { success, message } = await request.post('/auth/login-local', data);
-      setIsLoading(false);
+      try {
+        const { success, message } = await request.post('/auth/login-local', data);
+        if (!success) {
+          const newAttempts = attemptCount + 1;
+          logger.warn(`Login failed, attempt ${newAttempts}/${MAX_LOGIN_ATTEMPTS}`);
+          handleLoginFailure(newAttempts, message);
+          return;
+        }
 
-      if (success) {
         localStorage.removeItem(STORAGE_KEY_ATTEMPTS);
         localStorage.removeItem(STORAGE_KEY_LOCK_END);
         setAttemptCount(0);
-        logger.debug('Login successful, redirecting...');
-        window.location.href = '/';
-      } else {
-        const newAttempts = attemptCount + 1;
-        logger.warn(`Login failed, attempt ${newAttempts}/${MAX_LOGIN_ATTEMPTS}:`, message);
-        handleLoginFailure(newAttempts, message);
+        // A successful password response does not prove that the browser's
+        // Cookie and CSRF form a usable session. Verify before leaving login.
+        const session = await request.get('/device', { cache: 'no-store', timeout: 10000 });
+        if (!session.success) {
+          logger.warn('Local session verification failed', { code: session.code });
+          form.setError('password', {
+            type: 'manual', message: t('login.error.sessionUnavailable'),
+          });
+          return;
+        }
+        logger.debug('Login session verified, redirecting...');
+        window.location.replace('/');
+      } finally {
+        loginPendingRef.current = false;
+        setIsLoading(false);
       }
     },
     [isAccountLocked, lockTimeRemaining, attemptCount, form, t, handleLoginFailure]

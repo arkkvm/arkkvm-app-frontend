@@ -3,9 +3,16 @@
 *.local
 *.log*
 
+# Local test files
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
 # Environment variables (local overrides)
 .env.local
 .env.*.local
+.env.signing
 
 # Documentation files
 *.md
@@ -13,11 +20,26 @@
 !/README.md
 !/CONTRIBUTING.md
 !/.github/pull_request_template.md
+!/knowledge-base/
+!/knowledge-base/**/*.md
 .windsurf
 # Dist
 node_modules
 dist/
 docs/
+knowledge-base/*
+src-tauri/target/
+src-tauri/gen/
+# src-tauri/
+
+# Desktop build artifacts and certificates
+*.dmg
+*.app
+*.pkg
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
 
 # Profile
 .rspack-profile-*/
@@ -34,3 +56,9 @@ src/router/routeConfig.ts
 
 # Temporary files
 src/hooks/useWebRtcFile copy.ts
+
+# Local coding-agent notes (not published)
+/AGENTS.md
+/CLAUDE.md
+/docs/
+

@@ -107,8 +107,6 @@ async function generate() {
         // Ensure path starts with /
         finalPath = meta.path.startsWith('/') ? meta.path : `/${meta.path}`;
         // Remove trailing /
-        console.log('meta',meta?.path);
-        console.log('finalPath',finalPath);
         finalPath = finalPath.replace(/\/+$/, '');
       }
 

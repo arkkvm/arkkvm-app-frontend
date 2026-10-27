@@ -77,7 +77,6 @@ const postcssPlugin = (opts = {}) => {
             // Prefix selector classes
             const prefixed = addPrefixToSelector(selector, prefix);
             if (debug) {
-              // console.log(`[PostCSS Tailwind Prefix] ${selector} -> ${prefixed}`);
             }
             return prefixed;
           }

@@ -48,7 +48,34 @@
     "continueUploading": "Continue uploading",
     "uploadImageButton": "Upload Image",
     "uploadImageTooltip": "Select the image file you uploaded last time",
-    "resumeFallback": "Please re-select the file to continue the upload"
+    "resumeFallback": "Please re-select the file to continue the upload",
+    "details": {
+      "categories": {
+        "system": "System Data",
+        "logs": "Logs",
+        "images": "Images"
+      },
+      "title": "Storage Details",
+      "type": "Type",
+      "used": "Used",
+      "required": "Required",
+      "ok": "OK",
+      "systemData": "System Data",
+      "logs": "Logs",
+      "images": "Images",
+      "clearLogs": "Clear Logs",
+      "clearLogsTitle": "Clear All Logs?",
+      "clearLogsDescription": "This will permanently delete all logs from ArkKVM. This action cannot be undone.",
+      "logsCleared": "Logs were cleared successfully.",
+      "clearLogsFailed": "Failed to clear logs. Please try again.",
+      "clearImages": "Clear Images",
+      "systemNote": "System data is required by ArkKVM and cannot be deleted.",
+      "deleteImagesTitle": "Delete All Images?",
+      "deleteImagesDescription": "This will permanently delete all images from Virtual Media. This action cannot be undone.",
+      "deleteAllImages": "Delete All Images",
+      "imagesDeleted": "All images were deleted successfully.",
+      "imagesDeleteFailed": "Failed to delete all images. Please try again."
+    }
   },
   "urlMount": {
     "imageUrlLabel": "Image URL",

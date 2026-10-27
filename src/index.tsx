@@ -16,10 +16,14 @@ import './autofill-override.css';
 import './global.css';
 
 import ReactDOM from 'react-dom/client';
-import App from './App';
-import './i18n';
+import i18n from './i18n';
+import { initializeCloudEnvironment } from './utils/env';
 import { LogLevel, configureLogger, createLogger } from './utils/logger';
 import { initMobileDebug } from './utils/mobileDebug';
+
+// Browser translation mutates React-owned DOM; use the built-in language switcher.
+document.documentElement.setAttribute('translate', 'no');
+document.documentElement.classList.add('notranslate');
 
 window.__arkkvm_debug__ = { configureLogger, LogLevel };
 
@@ -65,8 +69,20 @@ window.addEventListener('unhandledrejection', event => {
 
 initMobileDebug();
 
-const rootEl = document.getElementById('root');
-if (rootEl) {
-  const root = ReactDOM.createRoot(rootEl);
-  root.render(<App />);
+async function bootstrap() {
+  const rootEl = document.getElementById('root');
+  if (!rootEl) return;
+  try {
+    await initializeCloudEnvironment();
+  } catch {
+    console.error('[cloud-config] Cloud configuration is invalid; application startup stopped.');
+    const message = document.createElement('p');
+    message.setAttribute('role', 'alert');
+    message.textContent = i18n.t('cloudConfig.error', { ns: 'common' });
+    rootEl.replaceChildren(message);
+    return;
+  }
+  const { default: App } = await import('./App');
+  ReactDOM.createRoot(rootEl).render(<App />);
 }
+void bootstrap();

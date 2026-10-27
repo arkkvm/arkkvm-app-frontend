@@ -53,16 +53,18 @@ interface AlertDialogContentProps
   extends React.ComponentProps<typeof AlertDialogPrimitive.Content> {
   /** Callback fired when the modal overlay is clicked. */
   onOverlayClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  overlayClassName?: string;
 }
 
 function AlertDialogContent({
   className,
   onOverlayClick,
+  overlayClassName,
   ...props
 }: AlertDialogContentProps) {
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay onClick={onOverlayClick} />
+      <AlertDialogOverlay className={overlayClassName} onClick={onOverlayClick} />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         className={cn(

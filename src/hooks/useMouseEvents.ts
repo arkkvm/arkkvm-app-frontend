@@ -16,7 +16,7 @@ type DoubleClickEventHandler = (
   x: number,
   y: number,
   source: DoubleClickSource,
-) => void
+) => void | Promise<void>
 
 interface MouseEventsOptions {
   videoRef: React.RefObject<HTMLVideoElement | null>
@@ -74,7 +74,54 @@ const TOUCH_CONSTANTS = {
   DOUBLE_TAP_DELAY: 400,
   DOUBLE_TAP_DISTANCE: 30,
   TAP_DELAY_OFFSET: 50,
+  DRAG_START_DISTANCE: 8,
+  TWO_FINGER_TAP_DELAY: 500,
+  TWO_FINGER_TAP_DISTANCE: 24,
+  TWO_FINGER_SCROLL_STEP_DISTANCE: 16,
+  BUTTON_RELEASE_DELAY: 50,
+  CONTEXT_MENU_NAVIGATION_TIMEOUT: 5_000,
+  CONTEXT_MENU_SELECTION_DISTANCE: 5,
 } as const;
+
+interface TwoFingerTapState {
+  startedAt: number
+  centerX: number
+  centerY: number
+  moved: boolean
+  scrolling: boolean
+  lastCenterY: number
+  scrollAccumulatorY: number
+  startPoints: Array<{
+    identifier: number
+    x: number
+    y: number
+  }>
+}
+
+interface TouchContextMenuArmedState {
+  phase: 'armed'
+  expiresAt: number
+  pointerClientX: number
+  pointerClientY: number
+}
+
+interface TouchContextMenuTrackingState {
+  phase: 'tracking'
+  expiresAt: number
+  identifier: number
+  startTouchX: number
+  startTouchY: number
+  lastTouchX: number
+  lastTouchY: number
+  pointerClientX: number
+  pointerClientY: number
+  maxDistance: number
+  canceled: boolean
+}
+
+type TouchContextMenuState =
+  | TouchContextMenuArmedState
+  | TouchContextMenuTrackingState
 
 const JIGGLER_CONSTANTS = {
   IDLE_MS: 20_000,
@@ -147,6 +194,32 @@ const isTouchLikePointer = (e: PointerEvent): boolean => {
   return e.pointerType === 'touch' || e.pointerType === 'pen';
 };
 
+const syntheticTouchPointerEvents = new WeakSet<PointerEvent>();
+
+const isSyntheticTouchPointer = (e: PointerEvent): boolean => {
+  return syntheticTouchPointerEvents.has(e);
+};
+
+const createTouchPointerEvent = (
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  clientX: number,
+  clientY: number,
+  buttons: number
+): PointerEvent => {
+  const event = new PointerEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX,
+    clientY,
+    button: buttons === 2 ? 2 : 0,
+    buttons,
+    pointerId: 1,
+    pointerType: 'touch',
+  });
+  syntheticTouchPointerEvents.add(event);
+  return event;
+};
+
 const getControlSurface = (
   videoRef: React.RefObject<HTMLVideoElement | null>
 ): HTMLElement | null => {
@@ -180,7 +253,6 @@ export function useMouseEvents(options: MouseEventsOptions) {
     scrollThrottling,
     invertScroll = false,
     jiggler,
-    isCursorHidden = false,
   } = options;
   const enabled = options.enabled ?? true;
 
@@ -204,6 +276,13 @@ export function useMouseEvents(options: MouseEventsOptions) {
   const rafId = useRef<number | null>(null);
   const lastActivityTs = useRef<number>(Date.now());
   const jigglerTimer = useRef<number | null>(null);
+  const twoFingerTapRef = useRef<TwoFingerTapState | null>(null);
+  const touchStartPointRef = useRef<{ x: number; y: number } | null>(null);
+  const touchLeftButtonDownRef = useRef(false);
+  const touchRightClickTimerRef = useRef<number | null>(null);
+  const touchSequenceRef = useRef(0);
+  const touchDoubleClickCompletionRef = useRef<Promise<void> | null>(null);
+  const touchContextMenuRef = useRef<TouchContextMenuState | null>(null);
 
   const transform = useRef({
     scale: 1,
@@ -305,8 +384,9 @@ export function useMouseEvents(options: MouseEventsOptions) {
   const absMouseMovePointerEvent = useCallback(
     (e: PointerEvent) => {
       if (!onAbsMove) return;
+      if (e.pointerType === 'touch' && !isSyntheticTouchPointer(e)) return;
       if (isEventBlockedByOverlay(e)) return;
-      if (!isEventOnVideo(e, videoRef)) return;
+      if (!isSyntheticTouchPointer(e) && !isEventOnVideo(e, videoRef)) return;
       focusControlSurface(videoRef);
       lastActivityTs.current = Date.now();
       const t = transform.current;
@@ -356,9 +436,37 @@ export function useMouseEvents(options: MouseEventsOptions) {
   const relRafIdRef = useRef<number | null>(null);
   const clampI8 = (n: number) =>
     Math.max(MOUSE_CONSTANTS.INT8_MIN, Math.min(MOUSE_CONSTANTS.INT8_MAX, n));
+  const flushPendingRelMove = useCallback(
+    (x: number, y: number) => {
+      if (!onRelMove || mode !== 'relative') return;
+      let { dx, dy, buttons } = relAggRef.current;
+      relAggRef.current = { dx: 0, dy: 0, buttons };
+
+      dx = Math.max(
+        -MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME,
+        Math.min(MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME, dx)
+      );
+      dy = Math.max(
+        -MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME,
+        Math.min(MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME, dy)
+      );
+      dx = Math.trunc(dx);
+      dy = Math.trunc(dy);
+      while (dx !== 0 || dy !== 0) {
+        const stepX = clampI8(dx);
+        const stepY = clampI8(dy);
+        if (stepX === 0 && stepY === 0) break;
+        onRelMove({ dx: stepX, dy: stepY, buttons, x, y });
+        dx -= stepX;
+        dy -= stepY;
+      }
+    },
+    [onRelMove, mode]
+  );
   const relMouseMovePointerEvent = useCallback(
     (e: PointerEvent) => {
       if (!onRelMove || mode !== 'relative') return;
+      if (e.pointerType === 'touch' && !isSyntheticTouchPointer(e)) return;
       if (isEventBlockedByOverlay(e)) return;
       // When pointer lock is active, movement is unbounded by element edges.
       if (!isLockedRef.current && !isEventInRelativeMouseArea(e, videoRef)) return;
@@ -383,31 +491,11 @@ export function useMouseEvents(options: MouseEventsOptions) {
       if (relRafIdRef.current == null) {
         relRafIdRef.current = requestAnimationFrame(() => {
           relRafIdRef.current = null;
-          let { dx, dy, buttons } = relAggRef.current;
-          relAggRef.current = { dx: 0, dy: 0, buttons };
-
-          dx = Math.max(-MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME, Math.min(MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME, dx));
-          dy = Math.max(-MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME, Math.min(MOUSE_CONSTANTS.MAX_DELTA_PER_FRAME, dy));
-          dx = Math.trunc(dx);
-          dy = Math.trunc(dy);
-          while (dx !== 0 || dy !== 0) {
-            const stepX = clampI8(dx);
-            const stepY = clampI8(dy);
-            if (stepX === 0 && stepY === 0) break;
-            onRelMove({
-              dx: stepX,
-              dy: stepY,
-              buttons,
-              y: movementY,
-              x: movementX,
-            });
-            dx -= stepX;
-            dy -= stepY;
-          }
+          flushPendingRelMove(movementX, movementY);
         });
       }
     },
-    [onRelMove, mode]
+    [onRelMove, mode, flushPendingRelMove]
   );
 
   // const requestPointerLock = useCallback(() => {
@@ -418,6 +506,48 @@ export function useMouseEvents(options: MouseEventsOptions) {
   //     v.requestPointerLock();
   //   } catch {}
   // }, [mode, videoRef]);
+  const emitWheelDelta = useCallback(
+    (deltaX: number, deltaY: number): boolean => {
+      lastActivityTs.current = Date.now();
+      if (!onWheel) return false;
+      if (throttleMs > 0 && blockWheelEventRef.current) {
+        return false;
+      }
+
+      const wheelY =
+        (invertScroll ? 1 : -1) * normalizeWheelDelta(deltaY);
+
+      const wheelX =
+        (invertScroll ? -1 : 1) * normalizeWheelDelta(deltaX);
+
+      if (wheelY === 0 && wheelX === 0) {
+        return false;
+      }
+      onWheel({
+        deltaX: ~~deltaX,
+        deltaY: ~~deltaY,
+        wheelX: ~~wheelX,
+        wheelY: ~~wheelY,
+      });
+
+      if (throttleMs > 0) {
+        blockWheelEventRef.current = true;
+
+        if (wheelBlockTimerRef.current !== null) {
+          window.clearTimeout(wheelBlockTimerRef.current);
+        }
+
+        wheelBlockTimerRef.current = window.setTimeout(() => {
+          blockWheelEventRef.current = false;
+          wheelBlockTimerRef.current = null;
+        }, throttleMs);
+      }
+
+      return true;
+    },
+    [onWheel, throttleMs, invertScroll]
+  );
+
   const onWheelInternal = useCallback(
     (e: WheelEvent) => {
       if (isEventBlockedByOverlay(e)) return;
@@ -441,41 +571,9 @@ export function useMouseEvents(options: MouseEventsOptions) {
       if (!inArea) return;
 
       e.preventDefault();
-
-      if (throttleMs > 0 && blockWheelEventRef.current) {
-        return;
-      }
-
-      const wheelY =
-        (invertScroll ? 1 : -1) * normalizeWheelDelta(e.deltaY);
-
-      const wheelX =
-        (invertScroll ? -1 : 1) * normalizeWheelDelta(e.deltaX);
-
-      if (wheelY === 0 && wheelX === 0) {
-        return;
-      }
-      onWheel({
-        deltaX: ~~e.deltaX,
-        deltaY: ~~e.deltaY,
-        wheelX: ~~wheelX,
-        wheelY:~~wheelY,
-      });
-
-      if (throttleMs > 0) {
-        blockWheelEventRef.current = true;
-
-        if (wheelBlockTimerRef.current !== null) {
-          window.clearTimeout(wheelBlockTimerRef.current);
-        }
-
-        wheelBlockTimerRef.current = window.setTimeout(() => {
-          blockWheelEventRef.current = false;
-          wheelBlockTimerRef.current = null;
-        }, throttleMs);
-      }
+      emitWheelDelta(e.deltaX, e.deltaY);
     },
-    [onWheel, throttleMs, recomputeTransform, isEventBlockedByOverlay, invertScroll]
+    [onWheel, recomputeTransform, isEventBlockedByOverlay, emitWheelDelta]
   );
 
   const inEffectiveAreaByClient = (clientX: number, clientY: number) => {
@@ -533,12 +631,27 @@ export function useMouseEvents(options: MouseEventsOptions) {
     [onRightClick]
   );
 
+  const cancelPendingAbsMove = useCallback(() => {
+    latestPointer.current = null;
+    if (rafId.current !== null) {
+      cancelAnimationFrame(rafId.current);
+      rafId.current = null;
+    }
+  }, []);
+
   const absPointerDown = useCallback(
     (e: PointerEvent) => {
       if (!onAbsMove) return;
+      if (e.pointerType === 'touch' && !isSyntheticTouchPointer(e)) return;
       if (isEventBlockedByOverlay(e)) return;
-      if (!isEventOnVideo(e, videoRef)) return;
+      if (!isSyntheticTouchPointer(e) && !isEventOnVideo(e, videoRef)) return;
       focusControlSurface(videoRef);
+      // Desktop pointer moves are coalesced into the next animation frame.
+      // Drop an older move before a button transition so it cannot arrive
+      // after this press and overwrite the current button state.
+      if (!isTouchLikePointer(e)) {
+        cancelPendingAbsMove();
+      }
       try {
         getControlSurface(videoRef)?.setPointerCapture(e.pointerId);
       } catch {}
@@ -547,28 +660,46 @@ export function useMouseEvents(options: MouseEventsOptions) {
       lastSent.current = payload;
       onAbsMove(payload.x, payload.y, payload.buttons);
     },
-    [onAbsMove, videoRef]
+    [cancelPendingAbsMove, onAbsMove, videoRef]
   );
 
   const absPointerUp = useCallback(
     (e: PointerEvent) => {
       if (!onAbsMove) return;
+      if (e.pointerType === 'touch' && !isSyntheticTouchPointer(e)) return;
       if (isEventBlockedByOverlay(e)) return;
-      if (!isEventOnVideo(e, videoRef)) return;
+      if (!isSyntheticTouchPointer(e) && !isEventOnVideo(e, videoRef)) return;
+      // A queued drag move still contains buttons=1. Cancel it before sending
+      // buttons=0, otherwise the stale move can leave the remote button stuck.
+      // Synthetic touch events use the same RAF queue as mouse movement; native
+      // pen input keeps its existing coalescing behavior.
+      if (!isTouchLikePointer(e) || isSyntheticTouchPointer(e)) {
+        cancelPendingAbsMove();
+      }
       try {
         getControlSurface(videoRef)?.releasePointerCapture(e.pointerId);
       } catch {}
       const payload = computeAbsPayload(e);
-      if (!payload) return;
+      if (!payload) {
+        if (isSyntheticTouchPointer(e)) {
+          const last = lastSent.current;
+          if (last && last.buttons !== 0) {
+            onAbsMove(last.x, last.y, 0);
+            lastSent.current = { ...last, buttons: 0 };
+          }
+        }
+        return;
+      }
       lastSent.current = payload;
       onAbsMove(payload.x, payload.y, payload.buttons);
     },
-    [onAbsMove, videoRef]
+    [cancelPendingAbsMove, onAbsMove, videoRef]
   );
 
   const relPointerDown = useCallback(
     (e: PointerEvent) => {
       if (!onRelMove || mode !== 'relative') return;
+      if (e.pointerType === 'touch' && !isSyntheticTouchPointer(e)) return;
       if (isEventBlockedByOverlay(e)) return;
       if (!isLockedRef.current && !isEventInRelativeMouseArea(e, videoRef)) return;
       focusControlSurface(videoRef);
@@ -592,12 +723,27 @@ export function useMouseEvents(options: MouseEventsOptions) {
   const relPointerUp = useCallback(
     (e: PointerEvent) => {
       if (!onRelMove || mode !== 'relative') return;
+      if (e.pointerType === 'touch' && !isSyntheticTouchPointer(e)) return;
       if (isEventBlockedByOverlay(e)) return;
-      if (!isLockedRef.current && !isEventInRelativeMouseArea(e, videoRef)) return;
+      if (
+        !isLockedRef.current &&
+        !isSyntheticTouchPointer(e) &&
+        !isEventInRelativeMouseArea(e, videoRef)
+      ) {
+        return;
+      }
       if (isTouchLikePointer(e)) {
         try {
           getControlSurface(videoRef)?.releasePointerCapture(e.pointerId);
         } catch {}
+      }
+      if (isSyntheticTouchPointer(e)) {
+        relAggRef.current = { dx: 0, dy: 0, buttons: 0 };
+        if (relRafIdRef.current !== null) {
+          cancelAnimationFrame(relRafIdRef.current);
+          relRafIdRef.current = null;
+        }
+        lastClientRef.current = null;
       }
       const buttons = e.buttons || 0;
       onRelMove({
@@ -638,8 +784,9 @@ export function useMouseEvents(options: MouseEventsOptions) {
     }
 
     const last = lastSent.current;
-    if (last) {
+    if (last && last.buttons !== 0) {
       onAbsMove?.(last.x, last.y, 0);
+      lastSent.current = { ...last, buttons: 0 };
     }
   }, [mode, onAbsMove, onRelMove]);
 
@@ -647,13 +794,285 @@ export function useMouseEvents(options: MouseEventsOptions) {
   const tapTimeoutRef = useRef<number | null>(null);
   const touchEndTimerRef = useRef<number | null>(null); // Track touchEnd setTimeout
   const jigglerResetTimerRef = useRef<number | null>(null); // Track jiggler reset setTimeout
+
+  const clearPendingTouchState = useCallback(() => {
+    touchSequenceRef.current += 1;
+    if (tapTimeoutRef.current !== null) {
+      window.clearTimeout(tapTimeoutRef.current);
+      tapTimeoutRef.current = null;
+    }
+    if (touchEndTimerRef.current !== null) {
+      window.clearTimeout(touchEndTimerRef.current);
+      touchEndTimerRef.current = null;
+    }
+    if (touchRightClickTimerRef.current !== null) {
+      window.clearTimeout(touchRightClickTimerRef.current);
+      touchRightClickTimerRef.current = null;
+    }
+    twoFingerTapRef.current = null;
+    touchContextMenuRef.current = null;
+    touchStartPointRef.current = null;
+    touchLeftButtonDownRef.current = false;
+    lastTapRef.current = null;
+  }, []);
+
+  const updateTouchContextMenuPointer = useCallback(
+    (state: TouchContextMenuTrackingState, touch: Touch) => {
+      const deltaX = touch.clientX - state.lastTouchX;
+      const deltaY = touch.clientY - state.lastTouchY;
+      state.lastTouchX = touch.clientX;
+      state.lastTouchY = touch.clientY;
+      state.pointerClientX += deltaX;
+      state.pointerClientY += deltaY;
+      state.maxDistance = Math.max(
+        state.maxDistance,
+        Math.hypot(
+          touch.clientX - state.startTouchX,
+          touch.clientY - state.startTouchY
+        )
+      );
+
+      if (mode === 'absolute') {
+        const currentTransform = transform.current;
+        if (
+          currentTransform.scale > 0 &&
+          currentTransform.vw > 0 &&
+          currentTransform.vh > 0
+        ) {
+          state.pointerClientX = Math.max(
+            currentTransform.offX,
+            Math.min(
+              currentTransform.offX +
+                currentTransform.vw * currentTransform.scale,
+              state.pointerClientX
+            )
+          );
+          state.pointerClientY = Math.max(
+            currentTransform.offY,
+            Math.min(
+              currentTransform.offY +
+                currentTransform.vh * currentTransform.scale,
+              state.pointerClientY
+            )
+          );
+        }
+      }
+
+      return mode === 'relative'
+        ? { clientX: touch.clientX, clientY: touch.clientY }
+        : {
+            clientX: state.pointerClientX,
+            clientY: state.pointerClientY,
+          };
+    },
+    [mode]
+  );
+
+  const sendTouchRightClick = useCallback(
+    (clientX: number, clientY: number) => {
+      const touchSequence = ++touchSequenceRef.current;
+      const beginRightClick = () => {
+        if (touchSequence !== touchSequenceRef.current) return;
+        const pointerDown = createTouchPointerEvent(
+          'pointerdown',
+          clientX,
+          clientY,
+          2
+        );
+
+        if (mode === 'relative') {
+          relPointerDown(pointerDown);
+        } else {
+          absPointerDown(pointerDown);
+        }
+
+        touchRightClickTimerRef.current = window.setTimeout(() => {
+          touchRightClickTimerRef.current = null;
+          const pointerUp = createTouchPointerEvent(
+            'pointerup',
+            clientX,
+            clientY,
+            0
+          );
+
+          if (mode === 'relative') {
+            relPointerUp(pointerUp);
+            lastClientRef.current = null;
+          } else {
+            absPointerUp(pointerUp);
+          }
+          touchContextMenuRef.current = {
+            phase: 'armed',
+            expiresAt:
+              Date.now() + TOUCH_CONSTANTS.CONTEXT_MENU_NAVIGATION_TIMEOUT,
+            pointerClientX: clientX,
+            pointerClientY: clientY,
+          };
+          lastTapRef.current = null;
+        }, TOUCH_CONSTANTS.BUTTON_RELEASE_DELAY);
+      };
+
+      const doubleClickCompletion = touchDoubleClickCompletionRef.current;
+      if (doubleClickCompletion) {
+        void doubleClickCompletion.then(beginRightClick, beginRightClick);
+        return;
+      }
+      beginRightClick();
+    },
+    [mode, relPointerDown, relPointerUp, absPointerDown, absPointerUp]
+  );
+
   const handleTouchStart = useCallback(
     (e: TouchEvent) => {
       e.preventDefault();
       e.stopPropagation();
 
+      const contextMenuState = touchContextMenuRef.current;
+      if (contextMenuState?.phase === 'tracking') {
+        if (e.touches.length < 2) return;
+        // An extra finger cancels menu navigation for this entire touch
+        // sequence. Do not reinterpret it as a fresh two-finger right-click.
+        contextMenuState.canceled = true;
+        cancelPendingAbsMove();
+        relAggRef.current = { dx: 0, dy: 0, buttons: 0 };
+        if (relRafIdRef.current !== null) {
+          cancelAnimationFrame(relRafIdRef.current);
+          relRafIdRef.current = null;
+        }
+        lastClientRef.current = null;
+        return;
+      }
+
+      if (e.touches.length >= 2) {
+        touchContextMenuRef.current = null;
+        const activeGesture = twoFingerTapRef.current;
+        if (activeGesture) {
+          const hasUntrackedTouch = Array.from(e.touches).some(
+            touch =>
+              !activeGesture.startPoints.some(
+                startPoint => startPoint.identifier === touch.identifier
+              )
+          );
+          if (e.touches.length > 2 || hasUntrackedTouch) {
+            activeGesture.moved = true;
+            activeGesture.scrolling = false;
+          }
+          return;
+        }
+
+        touchSequenceRef.current += 1;
+
+        if (tapTimeoutRef.current !== null) {
+          window.clearTimeout(tapTimeoutRef.current);
+          tapTimeoutRef.current = null;
+        }
+        if (touchEndTimerRef.current !== null) {
+          window.clearTimeout(touchEndTimerRef.current);
+          touchEndTimerRef.current = null;
+        }
+        if (touchRightClickTimerRef.current !== null) {
+          window.clearTimeout(touchRightClickTimerRef.current);
+          touchRightClickTimerRef.current = null;
+          releasePointerState();
+        }
+
+        const firstTouch = e.touches[0];
+        const secondTouch = e.touches[1];
+        if (!firstTouch || !secondTouch) return;
+
+        const hadActiveLeftDrag = touchLeftButtonDownRef.current;
+        if (hadActiveLeftDrag) {
+          releasePointerState();
+        } else {
+          cancelPendingAbsMove();
+          relAggRef.current = { dx: 0, dy: 0, buttons: 0 };
+          if (relRafIdRef.current !== null) {
+            cancelAnimationFrame(relRafIdRef.current);
+            relRafIdRef.current = null;
+          }
+          lastClientRef.current = null;
+        }
+
+        touchLeftButtonDownRef.current = false;
+        touchStartPointRef.current = null;
+        lastTapRef.current = null;
+        twoFingerTapRef.current = {
+          startedAt: Date.now(),
+          centerX: (firstTouch.clientX + secondTouch.clientX) / 2,
+          centerY: (firstTouch.clientY + secondTouch.clientY) / 2,
+          moved: hadActiveLeftDrag || e.touches.length !== 2,
+          scrolling: false,
+          lastCenterY: (firstTouch.clientY + secondTouch.clientY) / 2,
+          scrollAccumulatorY: 0,
+          startPoints: [firstTouch, secondTouch].map(touch => ({
+            identifier: touch.identifier,
+            x: touch.clientX,
+            y: touch.clientY,
+          })),
+        };
+        return;
+      }
+
+      if (twoFingerTapRef.current) return;
+
       const touch = e.touches[0];
       if (!touch) return;
+
+      const armedContextMenu = touchContextMenuRef.current;
+      if (armedContextMenu?.phase === 'armed') {
+        if (Date.now() <= armedContextMenu.expiresAt) {
+          // After a touch right-click, use one single-finger gesture as a
+          // temporary touchpad: movement only hovers, and lift confirms.
+          touchSequenceRef.current += 1;
+          if (tapTimeoutRef.current !== null) {
+            window.clearTimeout(tapTimeoutRef.current);
+            tapTimeoutRef.current = null;
+          }
+          if (touchEndTimerRef.current !== null) {
+            window.clearTimeout(touchEndTimerRef.current);
+            touchEndTimerRef.current = null;
+          }
+          if (touchLeftButtonDownRef.current) {
+            releasePointerState();
+          }
+
+          touchLeftButtonDownRef.current = false;
+          touchStartPointRef.current = null;
+          lastTapRef.current = null;
+          touchContextMenuRef.current = {
+            phase: 'tracking',
+            expiresAt: armedContextMenu.expiresAt,
+            identifier: touch.identifier,
+            startTouchX: touch.clientX,
+            startTouchY: touch.clientY,
+            lastTouchX: touch.clientX,
+            lastTouchY: touch.clientY,
+            pointerClientX: armedContextMenu.pointerClientX,
+            pointerClientY: armedContextMenu.pointerClientY,
+            maxDistance: 0,
+            canceled: false,
+          };
+          if (mode === 'relative') {
+            lastClientRef.current = {
+              x: touch.clientX,
+              y: touch.clientY,
+            };
+          }
+          return;
+        }
+        touchContextMenuRef.current = null;
+      }
+
+      if (touchRightClickTimerRef.current !== null) {
+        window.clearTimeout(touchRightClickTimerRef.current);
+        touchRightClickTimerRef.current = null;
+        releasePointerState();
+      }
+
+      touchStartPointRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+      };
 
       const now = Date.now();
       const currentTap = {
@@ -673,28 +1092,80 @@ export function useMouseEvents(options: MouseEventsOptions) {
         if (timeDiff < TOUCH_CONSTANTS.DOUBLE_TAP_DELAY && distance < TOUCH_CONSTANTS.DOUBLE_TAP_DISTANCE) {
           isDoubleClick = true;
           lastTapRef.current = null;
+          touchSequenceRef.current += 1;
 
-          if (tapTimeoutRef.current) {
-            clearTimeout(tapTimeoutRef.current);
+          if (tapTimeoutRef.current !== null) {
+            window.clearTimeout(tapTimeoutRef.current);
             tapTimeoutRef.current = null;
+          }
+          if (touchEndTimerRef.current !== null) {
+            window.clearTimeout(touchEndTimerRef.current);
+            touchEndTimerRef.current = null;
+          }
+
+          if (touchLeftButtonDownRef.current) {
+            releasePointerState();
+            touchLeftButtonDownRef.current = false;
+
+            const pointerDown = createTouchPointerEvent(
+              'pointerdown',
+              currentTap.x,
+              currentTap.y,
+              1
+            );
+            if (mode === 'relative') {
+              lastClientRef.current = {
+                x: currentTap.x,
+                y: currentTap.y,
+              };
+              relPointerDown(pointerDown);
+            } else {
+              absPointerDown(pointerDown);
+            }
+            touchLeftButtonDownRef.current = true;
+            return;
           }
 
           if (onDoubleClick) {
-            const fakePointer = new PointerEvent('pointerdown', {
-              bubbles: true,
-              cancelable: true,
-              clientX: currentTap.x,
-              clientY: currentTap.y,
-              button: 0,
-              buttons: 1,
-              pointerId: 1,
-              pointerType: 'touch',
-            });
+            const fakePointer = createTouchPointerEvent(
+              'pointerdown',
+              currentTap.x,
+              currentTap.y,
+              1
+            );
             const payload = computeAbsPayload(fakePointer);
             if (payload) {
-              onDoubleClick(0, payload.x, payload.y, 'touch');
+              const completion = onDoubleClick(
+                0,
+                payload.x,
+                payload.y,
+                'touch'
+              );
+              if (completion) {
+                const trackedCompletion = Promise.resolve(completion);
+                touchDoubleClickCompletionRef.current = trackedCompletion;
+                void trackedCompletion.then(
+                  () => {
+                    if (
+                      touchDoubleClickCompletionRef.current ===
+                      trackedCompletion
+                    ) {
+                      touchDoubleClickCompletionRef.current = null;
+                    }
+                  },
+                  () => {
+                    if (
+                      touchDoubleClickCompletionRef.current ===
+                      trackedCompletion
+                    ) {
+                      touchDoubleClickCompletionRef.current = null;
+                    }
+                  }
+                );
+              }
             }
           }
+          touchStartPointRef.current = null;
           return;
         } else {
           lastTapRef.current = currentTap;
@@ -704,17 +1175,36 @@ export function useMouseEvents(options: MouseEventsOptions) {
       }
 
       if (!isDoubleClick) {
-        tapTimeoutRef.current = window.setTimeout(() => {
-          const pointerEvent = new PointerEvent('pointerdown', {
-            bubbles: true,
-            cancelable: true,
-            clientX: touch.clientX,
-            clientY: touch.clientY,
-            button: 0,
-            buttons: 1,
-            pointerId: 1,
-            pointerType: 'touch',
-          });
+        const touchSequence = ++touchSequenceRef.current;
+        if (tapTimeoutRef.current !== null) {
+          window.clearTimeout(tapTimeoutRef.current);
+          tapTimeoutRef.current = null;
+        }
+        if (touchEndTimerRef.current !== null) {
+          window.clearTimeout(touchEndTimerRef.current);
+          touchEndTimerRef.current = null;
+        }
+        if (touchLeftButtonDownRef.current) {
+          releasePointerState();
+          touchLeftButtonDownRef.current = false;
+        }
+
+        const timerId = window.setTimeout(() => {
+          if (tapTimeoutRef.current === timerId) {
+            tapTimeoutRef.current = null;
+          }
+          if (
+            touchSequence !== touchSequenceRef.current ||
+            twoFingerTapRef.current
+          ) {
+            return;
+          }
+          const pointerEvent = createTouchPointerEvent(
+            'pointerdown',
+            touch.clientX,
+            touch.clientY,
+            1
+          );
 
           if (mode === 'relative') {
             relPointerDown(pointerEvent);
@@ -722,11 +1212,19 @@ export function useMouseEvents(options: MouseEventsOptions) {
             absPointerDown(pointerEvent);
           }
 
-          tapTimeoutRef.current = null;
+          touchLeftButtonDownRef.current = true;
         }, TOUCH_CONSTANTS.DOUBLE_TAP_DELAY / 2);
+        tapTimeoutRef.current = timerId;
       }
     },
-    [mode, relPointerDown, absPointerDown, onDoubleClick]
+    [
+      mode,
+      relPointerDown,
+      absPointerDown,
+      onDoubleClick,
+      releasePointerState,
+      cancelPendingAbsMove,
+    ]
   );
 
   const handleTouchMove = useCallback(
@@ -734,27 +1232,164 @@ export function useMouseEvents(options: MouseEventsOptions) {
       e.preventDefault();
       e.stopPropagation();
 
-      const touch = e.touches[0];
+      const contextMenuState = touchContextMenuRef.current;
+      if (contextMenuState?.phase === 'tracking') {
+        if (e.touches.length !== 1) {
+          contextMenuState.canceled = true;
+          return;
+        }
+        const touch = Array.from(e.touches).find(
+          candidate => candidate.identifier === contextMenuState.identifier
+        );
+        if (!touch) {
+          contextMenuState.canceled = true;
+          return;
+        }
 
+        const pointerPosition = updateTouchContextMenuPointer(
+          contextMenuState,
+          touch
+        );
+        const pointerMove = createTouchPointerEvent(
+          'pointermove',
+          pointerPosition.clientX,
+          pointerPosition.clientY,
+          0
+        );
+        if (mode === 'relative') {
+          relMouseMovePointerEvent(pointerMove);
+        } else {
+          absMouseMovePointerEvent(pointerMove);
+        }
+        return;
+      }
+
+      const twoFingerTap = twoFingerTapRef.current;
+      if (twoFingerTap) {
+        if (e.touches.length !== 2) {
+          twoFingerTap.moved = true;
+          twoFingerTap.scrolling = false;
+          return;
+        }
+
+        const firstStartPoint = twoFingerTap.startPoints[0];
+        const secondStartPoint = twoFingerTap.startPoints[1];
+        const touches = Array.from(e.touches);
+        const firstTouch = touches.find(
+          touch => touch.identifier === firstStartPoint?.identifier
+        );
+        const secondTouch = touches.find(
+          touch => touch.identifier === secondStartPoint?.identifier
+        );
+        if (!firstStartPoint || !secondStartPoint || !firstTouch || !secondTouch) {
+          twoFingerTap.moved = true;
+          twoFingerTap.scrolling = false;
+          return;
+        }
+
+        if (twoFingerTap.moved && !twoFingerTap.scrolling) {
+          return;
+        }
+
+        const currentCenterY = (firstTouch.clientY + secondTouch.clientY) / 2;
+        twoFingerTap.scrollAccumulatorY +=
+          currentCenterY - twoFingerTap.lastCenterY;
+        twoFingerTap.lastCenterY = currentCenterY;
+
+        if (!twoFingerTap.scrolling) {
+          const verticalDistance = currentCenterY - twoFingerTap.centerY;
+          if (
+            Math.abs(verticalDistance) <
+            TOUCH_CONSTANTS.TWO_FINGER_SCROLL_STEP_DISTANCE
+          ) {
+            const movedBeyondTapDistance =
+              Math.hypot(
+                firstTouch.clientX - firstStartPoint.x,
+                firstTouch.clientY - firstStartPoint.y
+              ) > TOUCH_CONSTANTS.TWO_FINGER_TAP_DISTANCE ||
+              Math.hypot(
+                secondTouch.clientX - secondStartPoint.x,
+                secondTouch.clientY - secondStartPoint.y
+              ) > TOUCH_CONSTANTS.TWO_FINGER_TAP_DISTANCE;
+            if (movedBeyondTapDistance) {
+              twoFingerTap.moved = true;
+            }
+            return;
+          }
+
+          twoFingerTap.scrolling = true;
+          twoFingerTap.moved = true;
+        }
+
+        const scrollSteps = Math.trunc(
+          twoFingerTap.scrollAccumulatorY /
+            TOUCH_CONSTANTS.TWO_FINGER_SCROLL_STEP_DISTANCE
+        );
+        if (
+          scrollSteps !== 0 &&
+          emitWheelDelta(0, -scrollSteps * 100)
+        ) {
+          twoFingerTap.scrollAccumulatorY -=
+            scrollSteps * TOUCH_CONSTANTS.TWO_FINGER_SCROLL_STEP_DISTANCE;
+        }
+        return;
+      }
+
+      const touch = e.touches[0];
       if (!touch) return;
 
-      const pointerEvent = new PointerEvent('pointermove', {
-        bubbles: true,
-        cancelable: true,
-        clientX: touch.clientX,
-        clientY: touch.clientY,
-        button: 0,
-        buttons: 1,
-        pointerId: 1,
-        pointerType: 'touch',
-      });
+      const startPoint = touchStartPointRef.current;
+      if (!startPoint) return;
+
+      if (!touchLeftButtonDownRef.current) {
+        const dragDistance = Math.hypot(
+          touch.clientX - startPoint.x,
+          touch.clientY - startPoint.y
+        );
+        if (dragDistance < TOUCH_CONSTANTS.DRAG_START_DISTANCE) return;
+
+        if (tapTimeoutRef.current !== null) {
+          window.clearTimeout(tapTimeoutRef.current);
+          tapTimeoutRef.current = null;
+        }
+        lastTapRef.current = null;
+
+        const pointerDown = createTouchPointerEvent(
+          'pointerdown',
+          startPoint.x,
+          startPoint.y,
+          1
+        );
+        if (mode === 'relative') {
+          lastClientRef.current = { x: startPoint.x, y: startPoint.y };
+          relPointerDown(pointerDown);
+        } else {
+          absPointerDown(pointerDown);
+        }
+        touchLeftButtonDownRef.current = true;
+      }
+
+      const pointerEvent = createTouchPointerEvent(
+        'pointermove',
+        touch.clientX,
+        touch.clientY,
+        1
+      );
       if (mode === 'relative') {
         relMouseMovePointerEvent(pointerEvent);
       } else {
         absMouseMovePointerEvent(pointerEvent);
       }
     },
-    [mode, relMouseMovePointerEvent, absMouseMovePointerEvent]
+    [
+      mode,
+      relPointerDown,
+      absPointerDown,
+      relMouseMovePointerEvent,
+      absMouseMovePointerEvent,
+      updateTouchContextMenuPointer,
+      emitWheelDelta,
+    ]
   );
 
   const handleTouchEnd = useCallback(
@@ -762,64 +1397,223 @@ export function useMouseEvents(options: MouseEventsOptions) {
       e.preventDefault();
       e.stopPropagation();
 
+      const contextMenuState = touchContextMenuRef.current;
+      if (contextMenuState?.phase === 'tracking') {
+        if (e.touches.length > 0) {
+          contextMenuState.canceled = true;
+          return;
+        }
+
+        touchContextMenuRef.current = null;
+        const touch = Array.from(e.changedTouches).find(
+          candidate => candidate.identifier === contextMenuState.identifier
+        );
+        if (contextMenuState.canceled || !touch) {
+          lastClientRef.current = null;
+          return;
+        }
+
+        const pointerPosition = updateTouchContextMenuPointer(
+          contextMenuState,
+          touch
+        );
+        if (
+          contextMenuState.maxDistance <
+          TOUCH_CONSTANTS.CONTEXT_MENU_SELECTION_DISTANCE
+        ) {
+          // Ignore an accidental tap so it cannot immediately dismiss the
+          // remote menu; keep the navigation gesture available for a retry.
+          touchContextMenuRef.current = {
+            phase: 'armed',
+            expiresAt:
+              Date.now() + TOUCH_CONSTANTS.CONTEXT_MENU_NAVIGATION_TIMEOUT,
+            pointerClientX: contextMenuState.pointerClientX,
+            pointerClientY: contextMenuState.pointerClientY,
+          };
+          lastClientRef.current = null;
+          return;
+        }
+
+        const pointerMove = createTouchPointerEvent(
+          'pointermove',
+          pointerPosition.clientX,
+          pointerPosition.clientY,
+          0
+        );
+        if (mode === 'relative') {
+          relMouseMovePointerEvent(pointerMove);
+          if (relRafIdRef.current !== null) {
+            cancelAnimationFrame(relRafIdRef.current);
+            relRafIdRef.current = null;
+          }
+          flushPendingRelMove(0, 0);
+        } else {
+          cancelPendingAbsMove();
+          const hoverPayload = computeAbsPayload(pointerMove);
+          if (hoverPayload) {
+            lastSent.current = hoverPayload;
+            onAbsMove?.(
+              hoverPayload.x,
+              hoverPayload.y,
+              hoverPayload.buttons
+            );
+          }
+        }
+
+        const pointerDown = createTouchPointerEvent(
+          'pointerdown',
+          pointerPosition.clientX,
+          pointerPosition.clientY,
+          1
+        );
+        if (mode === 'relative') {
+          relPointerDown(pointerDown);
+        } else {
+          absPointerDown(pointerDown);
+        }
+        touchLeftButtonDownRef.current = true;
+
+        const timerId = window.setTimeout(() => {
+          if (touchEndTimerRef.current === timerId) {
+            touchEndTimerRef.current = null;
+          }
+          const pointerUp = createTouchPointerEvent(
+            'pointerup',
+            pointerPosition.clientX,
+            pointerPosition.clientY,
+            0
+          );
+          if (mode === 'relative') {
+            relPointerUp(pointerUp);
+            lastClientRef.current = null;
+          } else {
+            absPointerUp(pointerUp);
+          }
+          touchLeftButtonDownRef.current = false;
+        }, TOUCH_CONSTANTS.BUTTON_RELEASE_DELAY);
+        touchEndTimerRef.current = timerId;
+        return;
+      }
+
+      const twoFingerTap = twoFingerTapRef.current;
+      if (twoFingerTap) {
+        for (let index = 0; index < e.changedTouches.length; index += 1) {
+          const changedTouch = e.changedTouches[index];
+          if (!changedTouch) continue;
+          const startPoint = twoFingerTap.startPoints.find(
+            point => point.identifier === changedTouch.identifier
+          );
+          if (
+            !startPoint ||
+            Math.hypot(
+              changedTouch.clientX - startPoint.x,
+              changedTouch.clientY - startPoint.y
+            ) > TOUCH_CONSTANTS.TWO_FINGER_TAP_DISTANCE
+          ) {
+            twoFingerTap.moved = true;
+            break;
+          }
+        }
+
+        if (e.touches.length > 0) {
+          twoFingerTap.scrolling = false;
+          return;
+        }
+
+        twoFingerTapRef.current = null;
+        const isValidRightClick =
+          !twoFingerTap.moved &&
+          Date.now() - twoFingerTap.startedAt <=
+            TOUCH_CONSTANTS.TWO_FINGER_TAP_DELAY;
+
+        if (isValidRightClick) {
+          sendTouchRightClick(
+            twoFingerTap.centerX,
+            twoFingerTap.centerY
+          );
+        }
+        return;
+      }
+
       const touch = e.changedTouches[0];
       if (!touch) return;
+      touchStartPointRef.current = null;
+      const touchSequence = touchSequenceRef.current;
 
       // Clear previous touchEnd timer to prevent leaks
-      if (touchEndTimerRef.current) {
-        clearTimeout(touchEndTimerRef.current);
+      if (touchEndTimerRef.current !== null) {
+        window.clearTimeout(touchEndTimerRef.current);
         touchEndTimerRef.current = null;
       }
 
-      if (tapTimeoutRef.current) {
-        touchEndTimerRef.current = window.setTimeout(
+      if (tapTimeoutRef.current !== null) {
+        const timerId = window.setTimeout(
           () => {
-            touchEndTimerRef.current = null;
-            const pointerEvent = new PointerEvent('pointerup', {
-              bubbles: true,
-              cancelable: true,
-              clientX: touch.clientX,
-              clientY: touch.clientY,
-              button: 0,
-              buttons: 0,
-              pointerId: 1,
-              pointerType: 'touch',
-            });
+            if (touchEndTimerRef.current === timerId) {
+              touchEndTimerRef.current = null;
+            }
+            if (touchSequence !== touchSequenceRef.current) return;
+            const pointerEvent = createTouchPointerEvent(
+              'pointerup',
+              touch.clientX,
+              touch.clientY,
+              0
+            );
 
             if (mode === 'relative') {
               relPointerUp(pointerEvent);
             } else {
               absPointerUp(pointerEvent);
             }
+            touchLeftButtonDownRef.current = false;
           },
           TOUCH_CONSTANTS.DOUBLE_TAP_DELAY / 2 + TOUCH_CONSTANTS.TAP_DELAY_OFFSET
         ) as unknown as number;
-      } else {
-        const pointerEvent = new PointerEvent('pointerup', {
-          bubbles: true,
-          cancelable: true,
-          clientX: touch.clientX,
-          clientY: touch.clientY,
-          button: 0,
-          buttons: 0,
-          pointerId: 1,
-          pointerType: 'touch',
-        });
+        touchEndTimerRef.current = timerId;
+      } else if (touchLeftButtonDownRef.current) {
+        const pointerEvent = createTouchPointerEvent(
+          'pointerup',
+          touch.clientX,
+          touch.clientY,
+          0
+        );
 
         if (mode === 'relative') {
           relPointerUp(pointerEvent);
         } else {
           absPointerUp(pointerEvent);
         }
+        touchLeftButtonDownRef.current = false;
       }
     },
-    [mode, relPointerUp, absPointerUp]
+    [
+      mode,
+      onAbsMove,
+      relMouseMovePointerEvent,
+      flushPendingRelMove,
+      cancelPendingAbsMove,
+      relPointerDown,
+      absPointerDown,
+      relPointerUp,
+      absPointerUp,
+      sendTouchRightClick,
+      updateTouchContextMenuPointer,
+    ]
   );
 
   const handleTouchCancel = useCallback(
     (e: TouchEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      clearPendingTouchState();
+      releasePointerState();
+    },
+    [clearPendingTouchState, releasePointerState]
+  );
+
+  const handlePointerCancel = useCallback(
+    (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return;
       releasePointerState();
     },
     [releasePointerState]
@@ -876,15 +1670,11 @@ export function useMouseEvents(options: MouseEventsOptions) {
     const handleSurfaceLeave = () => {
       releasePointerState();
     };
-    const handleSurfaceBlur = () => {
-      releasePointerState();
-    };
     controlSurface?.addEventListener('mouseenter', handleSurfaceEnter);
     controlSurface?.addEventListener('pointermove', handleSurfaceEnter, {
       passive: true,
     });
     controlSurface?.addEventListener('mouseleave', handleSurfaceLeave);
-    controlSurface?.addEventListener('blur', handleSurfaceBlur);
 
     const targetElement: EventTarget = document;
     targetElement.addEventListener(
@@ -901,7 +1691,7 @@ export function useMouseEvents(options: MouseEventsOptions) {
       targetElement.addEventListener('pointerup', relPointerUp as EventListener, {
         passive: true,
       });
-      targetElement.addEventListener('pointercancel', releasePointerState as EventListener, {
+      targetElement.addEventListener('pointercancel', handlePointerCancel as EventListener, {
         passive: true,
       });
     } else {
@@ -911,7 +1701,7 @@ export function useMouseEvents(options: MouseEventsOptions) {
       targetElement.addEventListener('pointerup', absPointerUp as EventListener, {
         passive: true,
       });
-      targetElement.addEventListener('pointercancel', releasePointerState as EventListener, {
+      targetElement.addEventListener('pointercancel', handlePointerCancel as EventListener, {
         passive: true,
       });
     }
@@ -921,10 +1711,17 @@ export function useMouseEvents(options: MouseEventsOptions) {
     });
 
     const onVis = () => {
-      if (document.hidden) releasePointerState();
+      if (document.hidden) {
+        clearPendingTouchState();
+        releasePointerState();
+      }
+    };
+    const onWindowBlur = () => {
+      clearPendingTouchState();
+      releasePointerState();
     };
     document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('blur', releasePointerState);
+    window.addEventListener('blur', onWindowBlur);
 
     const onLockChange = () => {
       const locked = document.pointerLockElement === v;
@@ -947,16 +1744,14 @@ export function useMouseEvents(options: MouseEventsOptions) {
     targetElement.addEventListener('dblclick', handleDoubleClick as EventListener);
     targetElement.addEventListener('contextmenu', handleRightClick as EventListener);
 
-    if (!isCursorHidden) {
-      v.addEventListener('touchstart', handleTouchStart as EventListener, {
-        passive: false,
-      });
-      v.addEventListener('touchmove', handleTouchMove as EventListener, {
-        passive: false,
-      });
-      v.addEventListener('touchend', handleTouchEnd as EventListener, { passive: false });
-      v.addEventListener('touchcancel', handleTouchCancel as EventListener, { passive: false });
-    }
+    v.addEventListener('touchstart', handleTouchStart as EventListener, {
+      passive: false,
+    });
+    v.addEventListener('touchmove', handleTouchMove as EventListener, {
+      passive: false,
+    });
+    v.addEventListener('touchend', handleTouchEnd as EventListener, { passive: false });
+    v.addEventListener('touchcancel', handleTouchCancel as EventListener, { passive: false });
 
     return () => {
       try {
@@ -967,7 +1762,6 @@ export function useMouseEvents(options: MouseEventsOptions) {
       controlSurface?.removeEventListener('mouseenter', handleSurfaceEnter);
       controlSurface?.removeEventListener('pointermove', handleSurfaceEnter);
       controlSurface?.removeEventListener('mouseleave', handleSurfaceLeave);
-      controlSurface?.removeEventListener('blur', handleSurfaceBlur);
       window.removeEventListener('resize', onWindowResize);
 
       document.removeEventListener(
@@ -982,22 +1776,20 @@ export function useMouseEvents(options: MouseEventsOptions) {
       document.removeEventListener('pointerup', relPointerUp as EventListener);
       document.removeEventListener('pointerdown', absPointerDown as EventListener);
       document.removeEventListener('pointerup', absPointerUp as EventListener);
-      document.removeEventListener('pointercancel', releasePointerState as EventListener);
+      document.removeEventListener('pointercancel', handlePointerCancel as EventListener);
       document.removeEventListener('wheel', onWheelInternal as EventListener);
       document.removeEventListener('click', handleClick as EventListener);
       document.removeEventListener('dblclick', handleDoubleClick as EventListener);
       document.removeEventListener('contextmenu', handleRightClick as EventListener);
       // v.removeEventListener('click', handleVideoClickForPointerLock);
 
-      if (!isCursorHidden) {
-        v.removeEventListener('touchstart', handleTouchStart as EventListener);
-        v.removeEventListener('touchmove', handleTouchMove as EventListener);
-        v.removeEventListener('touchend', handleTouchEnd as EventListener);
-        v.removeEventListener('touchcancel', handleTouchCancel as EventListener);
-      }
+      v.removeEventListener('touchstart', handleTouchStart as EventListener);
+      v.removeEventListener('touchmove', handleTouchMove as EventListener);
+      v.removeEventListener('touchend', handleTouchEnd as EventListener);
+      v.removeEventListener('touchcancel', handleTouchCancel as EventListener);
 
       document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('blur', releasePointerState);
+      window.removeEventListener('blur', onWindowBlur);
       document.removeEventListener('pointerlockchange', onLockChange);
 
       if (wheelBlockTimerRef.current) {
@@ -1009,14 +1801,12 @@ export function useMouseEvents(options: MouseEventsOptions) {
         cancelAnimationFrame(rafId.current);
         rafId.current = null;
       }
-      if (tapTimeoutRef.current) {
-        clearTimeout(tapTimeoutRef.current);
-        tapTimeoutRef.current = null;
-      }
-      // Clear touchEnd timer
-      if (touchEndTimerRef.current) {
-        clearTimeout(touchEndTimerRef.current);
-        touchEndTimerRef.current = null;
+      const hadActiveTouchButton =
+        touchLeftButtonDownRef.current ||
+        touchRightClickTimerRef.current !== null;
+      clearPendingTouchState();
+      if (hadActiveTouchButton) {
+        releasePointerState();
       }
     };
   }, [
@@ -1029,6 +1819,8 @@ export function useMouseEvents(options: MouseEventsOptions) {
     relPointerDown,
     relPointerUp,
     releasePointerState,
+    handlePointerCancel,
+    clearPendingTouchState,
     onWheelInternal,
     handleClick,
     handleDoubleClick,
@@ -1040,7 +1832,6 @@ export function useMouseEvents(options: MouseEventsOptions) {
     mode,
     enabled,
     throttleMs,
-    isCursorHidden,
   ]);
 
   useEffect(() => {

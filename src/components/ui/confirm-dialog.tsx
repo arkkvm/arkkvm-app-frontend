@@ -185,15 +185,15 @@ export const ConfirmDialogProvider: React.FC<{ children: ReactNode }> = ({
         className="z-[999]"
       >
         <AlertDialogContent
-          className="z-[999]"
+          className="z-[999] max-h-[calc(100dvh-2rem)] overflow-y-auto"
           onPointerDownOutside={e => e.stopPropagation()}
           onInteractOutside={e => e.stopPropagation()}
         >
-          <AlertDialogHeader>
+          <AlertDialogHeader className="min-w-0">
             <AlertDialogTitle>{dialog.title}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               {typeof dialog.content === 'string' ? (
-                <span>{dialog.content}</span>
+                <span className="min-w-0 whitespace-normal wrap-anywhere">{dialog.content}</span>
               ) : (
                 <div>{dialog.content}</div>
               )}

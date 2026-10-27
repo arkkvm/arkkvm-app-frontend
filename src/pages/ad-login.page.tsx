@@ -1,136 +1,248 @@
-/**
- * @Purpose:
- * @Descripttion:
- * @version:
- * @Author: zhanglei
- * @Date: 2025-10-07 21:00:59
- * @LastEditors: zhanglei
- * @LastEditTime: 2026-05-26 18:40:29
- */
 import { request } from '@/api';
-import { Button, TopNavbar } from '@/components';
-import { useAppStore } from '@/stores/';
-import { getSafeRedirectUrl, sanitizeError } from '@/utils/security';
-import { useEffect, useState } from 'react';
+import { TopNavbar } from '@/components';
+import { Button } from '@/components/ui/button';
+import { useAppStore } from '@/stores';
+import {
+  logCloudRegistration,
+  readCloudRegistrationContext,
+  saveCloudRegistrationCredentials,
+} from '@/utils/cloudRegistrationContext';
+import { env } from '@/utils/env';
+import {
+  getSafeRedirectUrl,
+  normalizeCloudOrigin,
+  normalizeDeviceId,
+  sanitizeError,
+} from '@/utils/security';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
-export const meta = {
-  // target: 'cloud',
-};
-export interface CloudState {
-  connected: boolean
-  url: string
-  appUrl: string
+export const meta = {};
+
+interface CloudState {
+  appUrl?: unknown;
 }
 
 export default function AdLoginRoute() {
   const { t } = useTranslation('common');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const [sq] = useSearchParams();
-  const setToken = useAppStore(s => s.setToken);
-  const deviceId = sq.get('deviceId');
-  const token = sq.get('token');
-  const oidcGoogle = sq.get('oidcGoogle');
-  const clientId = sq.get('clientId');
-  const sn = sq.get('sn');
-  const redirectUrl = sq.get('redirectUrl');
+  const [params] = useSearchParams();
+  const setToken = useAppStore(state => state.setToken);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const registrationComplete = useRef(false);
+  const rawDeviceId = params.get('deviceId');
+  const deviceId = normalizeDeviceId(rawDeviceId);
+  const token = params.get('token');
+  const loginToken = params.get('loginToken');
+  const oidcGoogle = params.get('oidcGoogle');
+  const clientId = params.get('clientId');
+  const sn = params.get('sn');
+  const redirectUrl = params.get('redirectUrl');
+
   useEffect(() => {
-    if (!token) return;
-    setToken(token);
-    if (sn === '1' && !!redirectUrl) {
+    logCloudRegistration(
+      'callback-received',
+      deviceId,
+      { pairingToken: token, webToken: loginToken },
+      {
+        target: env.target,
+        sn,
+        attempt,
+        hasOidcGoogle: !!oidcGoogle,
+        hasClientId: !!clientId,
+      }
+    );
+    if (!token || (rawDeviceId !== null && !deviceId)) {
+      navigate('/', { replace: true });
+      return;
+    }
+
+    if (sn === '1') {
       const safeUrl = getSafeRedirectUrl(redirectUrl);
-      if (safeUrl) {
-        window.location.href = safeUrl;
+      if (!safeUrl) {
+        navigate('/', { replace: true });
+        return;
+      }
+      const returnedPath = new URL(safeUrl, window.location.origin).pathname;
+      const match = returnedPath.match(/^\/devices\/([^/]+)\/set-name$/);
+      const returnedId = match ? normalizeDeviceId(decodeURIComponent(match[1])) : null;
+      if (env.target !== 'cloud') {
+        setToken(token);
+        window.location.replace(safeUrl);
+        return;
+      }
+      const context = returnedId ? readCloudRegistrationContext(returnedId) : null;
+      const existingToken = localStorage.getItem('token');
+      const candidates = [...new Set([
+        loginToken, context?.webToken, existingToken, token,
+      ].filter((value): value is string => Boolean(value)))];
+      const controller = new AbortController();
+      let cancelled = false;
+      void (async () => {
+        for (const candidate of candidates) {
+          try {
+            // A legacy callback may echo a consumed pairing token. Probe without
+            // replacing the current session or triggering the global 401 redirect.
+            const result = await request.get('/me', {
+              baseURL: env.apiBaseUrl,
+              headers: { Authorization: `Bearer ${candidate}` },
+              signal: controller.signal,
+              timeout: 10000,
+            });
+            if (cancelled) return;
+            if (!result.success || !result.data) continue;
+            setToken(candidate);
+            if (returnedId && context) {
+              navigate(`/devices/${encodeURIComponent(returnedId)}/connect?complete=1`, {
+                replace: true,
+              });
+            } else {
+              window.location.replace(safeUrl);
+            }
+            return;
+          } catch {
+            if (cancelled) return;
+          }
+        }
+        if (!cancelled) {
+          // Plain web login resumes naming; do not restart device registration.
+          if (localStorage.getItem('token') === existingToken) setToken(null);
+          navigate('/login', { replace: true, state: { from: { pathname: returnedPath } } });
+        }
+      })();
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
+    if (!deviceId) {
+      if (env.target === 'cloud') {
+        setToken(loginToken || token);
+        navigate('/devices/list', { replace: true });
       } else {
         navigate('/', { replace: true });
       }
+      return;
     }
-  }, [token, sn, redirectUrl, navigate, setToken]);
 
-  useEffect(() => {
-    const deviceRegister = async () => {
-      try {
-        const [stateRes, regRes] = await Promise.all([
-          request.get('/cloud/state', { timeout: 3000 }),
-          request.post('/cloud/register', {
-            token: token,
-            oidcGoogle,
-            clientId,
-          }),
-        ]);
-
-
-        // Use local variables to avoid stale closure bug with setState
-        let errMsg =
-          !stateRes.success || !regRes.success
-            ? regRes?.message || 'Failed to register device'
-            : '';
-
-        if (errMsg) setError(sanitizeError(errMsg));
-
-        if (regRes?.success) {
-          const {appUrl} = stateRes.data;
-          const cloudUrl = `${appUrl}/devices/${deviceId}/set-name`;
-          const rUrl = `${appUrl}/ad-login?sn=1&redirectUrl=${encodeURIComponent(cloudUrl)}&token=${token}`;
-
-          window.location.href = rUrl;
-        }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Network error';
-        setError(sanitizeError(`There was an error during cloud registration: ${errorMsg}`));
-      } finally {
-        setLoading(false);
+    if (env.target === 'cloud') {
+      setToken(loginToken || token);
+      const stored = saveCloudRegistrationCredentials(deviceId, {
+        pairingToken: token,
+        webToken: loginToken,
+        oidcGoogle,
+        clientId,
+      });
+      const context = readCloudRegistrationContext(deviceId);
+      logCloudRegistration('callback-stored', deviceId, context || {}, {
+        stored,
+        pairingMatchesCallback: context?.pairingToken === token,
+        loginMatchesCallback: context?.webToken === loginToken,
+      });
+      if (process.env.NODE_ENV === 'development') {
+        console.info('[cloud-registration:raw-callback]', {
+          url: window.location.href,
+          params: Array.from(params.entries()),
+          registerPayload: { token, oidcGoogle, clientId },
+          storedCredentials: {
+            token: context?.pairingToken,
+            loginToken: context?.webToken,
+            oidcGoogle: context?.oidcGoogle,
+            clientId: context?.clientId,
+          },
+        });
       }
-    };
-
-    if (!!deviceId) {
-      deviceRegister();
-    } else {
-      navigate('/', { replace: true });
+      debugger;
+      navigate(stored ? `/devices/${encodeURIComponent(deviceId)}/connect` : '/', {
+        replace: true,
+      });
+      return;
     }
-  }, [deviceId, token, oidcGoogle, clientId, navigate, setToken]);
 
-  if (loading) {
-    return (
-      <div className="flex flex-col min-h-screen">
-        <TopNavbar links={[]} showLoggedIn={false} />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-[14px] text-[var(--inactive-text-color)] animate-pulse">
-              Connecting to cloud...
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+    let cancelled = false;
+    void (async () => {
+      try {
+        setError('');
+        if (!registrationComplete.current) {
+          logCloudRegistration('device-register-request', deviceId, {
+            pairingToken: token,
+            webToken: loginToken,
+          });
+          const registerResult = await request.post(
+            '/cloud/register',
+            { token, oidcGoogle, clientId },
+            { timeout: 30000 }
+          );
+          logCloudRegistration(
+            'device-register-response',
+            deviceId,
+            {},
+            { success: registerResult.success }
+          );
+          if (cancelled) return;
+          if (!registerResult.success) {
+            setError(sanitizeError(registerResult.message || t('deviceConnect.bindError')));
+            return;
+          }
+          registrationComplete.current = true;
+        }
+        const stateResult = await request.get<CloudState>('/cloud/state', { timeout: 10000 });
+        if (cancelled) return;
+        const appOrigin = normalizeCloudOrigin(stateResult.data?.appUrl);
+        if (!stateResult.success || !appOrigin) {
+          setError(t('deviceConnect.cloudStateError'));
+          return;
+        }
+        const completionUrl = `${appOrigin}/devices/${encodeURIComponent(deviceId)}/set-name`;
+        const handoff = new URLSearchParams({
+          sn: '1',
+          redirectUrl: completionUrl,
+          token: loginToken || token,
+        });
+        window.location.replace(`${appOrigin}/ad-login?${handoff}`);
+      } catch (cause) {
+        if (!cancelled) {
+          const message = cause instanceof Error ? cause.message : t('deviceConnect.bindError');
+          setError(sanitizeError(message));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    attempt,
+    clientId,
+    deviceId,
+    loginToken,
+    navigate,
+    oidcGoogle,
+    rawDeviceId,
+    redirectUrl,
+    setToken,
+    sn,
+    t,
+    token,
+  ]);
 
-  if (error) {
-    return (
-      <div className="flex flex-col min-h-screen">
-        <TopNavbar links={[]} showLoggedIn={false} />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <h1 className="text-[32px] font-[700] text-[var(--text-primary)] mb-[12px]">
-              {t('adLoginError.title')}
-            </h1>
-            <p className="text-[14px] text-[var(--inactive-text-color)] mb-[32px] max-w-[400px]">
-              {t('adLoginError.description')}
-            </p>
-            <Button
-              className="px-[24px] py-[12px] border border-[var(--border-color)] bg-[var(--bg-button-color)]"
-              onClick={() => navigate('/')}
-            >
-              {t('adLoginError.backButton')}
+  return (
+    <div className="flex min-h-screen flex-col">
+      <TopNavbar links={[]} showLoggedIn={false} />
+      <main className="flex flex-1 items-center justify-center px-6 text-center">
+        <div>
+          <p className={error ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>
+            {error || t('deviceConnect.finishing')}
+          </p>
+          {error && (
+            <Button className="mt-5" onClick={() => setAttempt(value => value + 1)}>
+              {t('deviceConnect.retry')}
             </Button>
-          </div>
+          )}
         </div>
-      </div>
-    );
-  }
-
-  return null;
+      </main>
+    </div>
+  );
 }

@@ -46,6 +46,7 @@ export type DialogProps = {
   height?: number | string
   fullScreen?: boolean
   contentClassName?: string
+  overlayClassName?: string
   style?: React.CSSProperties
 
   /** Behavior enhancements. */
@@ -90,6 +91,7 @@ export function Dialog({
   height,
   fullScreen = false,
   contentClassName,
+  overlayClassName,
   style,
 
   noPadding = false,
@@ -142,6 +144,7 @@ export function Dialog({
       ) : null}
 
       <AlertDialogContent
+        overlayClassName={overlayClassName}
         className={`${baseContentClasses} ${fullScreenClasses} ${paddingClass} ${contentClassName ?? ''} pb-0 flex flex-col overflow-hidden ${fullScreen ? '' : 'max-h-[85vh] !max-w-[95vw] sm:!max-w-none'}`}
         style={contentStyle}
         onOverlayClick={() => {

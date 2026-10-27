@@ -1,4 +1,10 @@
 {
+  "accountDisplay": {
+    "providerUser": "{{provider}} 用户",
+    "user": "ArkKVM 用户"
+  },
+  "uploadOffsetConflict": "设备返回的上传位置不一致，已停止上传。请检查设备后重试。",
+  "uploadConfirmationInvalid": "设备未正确确认上传进度，已停止上传。请检查设备后重试。",
   "title": "ArkKVM",
   "connect": "连接",
   "disconnect": "断开连接",
@@ -58,6 +64,7 @@
   "login.error.failed": "登录失败，请检查您的用户名和密码",
   "login.error.invalidPassword": "密码错误，请重试",
   "login.error.invalidPasswordWithAttempts": "密码错误，还可尝试 {{attempts}} 次",
+  "login.error.sessionUnavailable": "密码验证成功，但设备登录会话未能生效。请关闭其他设备页面后，再次登录。",
   "login.error.tooManyAttempts": "错误次数过多，账号已锁定 5 分钟",
   "login.error.accountLocked": "账号已锁定，请 {{time}} 分钟后重试",
   "login.error.networkError": "登录失败，请检查密码",
@@ -70,14 +77,39 @@
     "title": "欢迎使用 ArkKVM Cloud",
     "description": "登录以连接您的 ArkKVM 进行远程访问。",
     "action": "使用 Google 继续",
-    "encryptedHint": "端到端加密。"
+    "encryptedHint": "端到端加密。",
+    "actionProvider": "使用 {{provider}} 继续",
+    "upgradeFirmware": "请先升级设备固件，再绑定到 ArkKVM中国云服务。",
+    "providersUnavailable": "暂时无法获取登录方式，请稍后重试。"
+  },
+  "cloudConfig": {
+    "error": "云端配置错误。请检查 /runtime-config.json 中的 apiBaseUrl、appBaseUrl 或自部署配置，然后重新加载。"
+  },
+  "cloudRegionNotice": {
+    "china": "检测到你在中国大陆，如果您需要在中国大陆地区部署并访问 ArkKVM设备，请跳转到位于中国大陆的云服务器。",
+    "global": "您当前位于中国大陆以外地区。如果您的 ArkKVM 也部署在中国大陆以外地区，请切换到国际云服务以获得最佳体验。",
+    "switch": "跳转",
+    "dismiss": "取消"
   },
   "cloudLoginDirect": {
     "title": "欢迎使用 ArkKVM Cloud",
     "description": "随时随地访问您的设备。",
     "action": "使用 Google 登录",
-    "encryptedHint": "端到端加密。"
+    "encryptedHint": "端到端加密。",
+    "actionProvider": "使用 {{provider}} 登录"
   },
+  "mcpConsent": {
+    "title": "连接本机 ArkKVM MCP",
+    "description": "本机上的 ArkKVM MCP 工具请求访问你的 ArkKVM Cloud 账号。",
+    "scopeTitle": "授权后它将可以：",
+    "scopes": "查看你的设备列表与状态；为选定的设备建立远控通道（画面 / 键鼠）。",
+    "noScope": "不会获得：你的账号凭据，以及删除或修改设备的权限。",
+    "allow": "允许并继续登录",
+    "deny": "取消",
+    "deniedTitle": "已取消连接",
+    "deniedDescription": "未向本机 MCP 工具授予任何权限，可以安全关闭此页面。"
+  },
+  "login.logoutRevocationFailed": "已在本地退出，但未能确认服务端会话已撤销。其他远端会话可能仍然有效。",
   "login.logout": "退出登录",
   "deviceCard.status.online": "在线",
   "deviceCard.status.offline": "离线",
@@ -250,7 +282,32 @@
       "deleteDisabled": {
         "ftcacheUploading": "对应上传任务进行中，无法删除该 .ftcache 文件"
       },
-      "resumeFallback": "请重新选择文件以继续上传"
+      "resumeFallback": "请重新选择文件以继续上传",
+      "storageDetails": {
+        "categories": {
+          "system": "系统数据",
+          "targetOs": "目标系统数据",
+          "files": "用户文件"
+        },
+        "deleteAllCategory": "删除所有{{label}}",
+        "title": "存储详情",
+        "type": "类型",
+        "used": "已使用",
+        "required": "必需",
+        "ok": "确定",
+        "cancel": "取消",
+        "usedPercent": "已使用 {{percent}}%",
+        "usedBytes": "已用 {{size}}",
+        "freeBytes": "剩余 {{size}}",
+        "targetOsData": "目标系统数据",
+        "files": "用户文件",
+        "deleteAllFiles": "删除所有文件",
+        "targetOsNote": "部分存储空间可能被目标电脑的操作系统自动创建的隐藏文件、文件系统数据或元数据占用。这些文件可能不会显示在 ArkKVM 的文件列表中。将虚拟 USB 驱动器挂载到目标电脑后，即可在目标电脑上管理这些文件。",
+        "deleteFilesTitle": "删除所有文件？",
+        "deleteFilesDescription": "这将永久删除虚拟 USB 驱动器中的所有文件。此操作无法撤销。",
+        "filesDeleted": "已成功删除所有文件。",
+        "filesDeleteFailed": "删除所有文件失败，请重试。"
+      }
     }
   },
   "wol": {
@@ -283,6 +340,21 @@
     "powerLed": "电源指示灯",
     "hddLed": "硬盘指示灯"
   },
+  "controlLease": {
+    "statusControlling": "Agent 状态：Claude Code 已启用",
+    "statusViewOnly": "Agent 状态：Claude Code 仅观察",
+    "statusNotControlling": "Agent 状态：未持有控制权",
+    "activeTitle": "检测到 AI Agent 正在控制",
+    "activeDescription": "AI Agent 当前正在控制此设备。接管控制将中断 Agent 的任务。选择“仅观看”可继续观察画面。",
+    "requestTitle": "AI Agent 请求使用 ArkKVM",
+    "requestDescription": "AI Agent 正在尝试控制此设备。点击“交出控制”或“仅观看”可交出控制权，点击“保留控制”可拒绝。",
+    "viewOnly": "仅观看",
+    "takeOver": "接管控制",
+    "keepControl": "保留控制",
+    "handOver": "交出控制",
+    "failed": "无法更新控制权，请重试。",
+    "stale": "此申请已处理或已过期。"
+  },
   "session": {
     "active": {
       "title": "检测到其他活动会话",
@@ -300,10 +372,7 @@
   "reboot": {
     "button": "重启",
     "title": "重启",
-    "desc": [
-      "重启将停止所有正在进行的任务。",
-      "重启完成后您可以继续操作。"
-    ],
+    "desc": ["重启将停止所有正在进行的任务。", "重启完成后您可以继续操作。"],
     "confirm": "重启"
   },
   "ocr": {
@@ -326,5 +395,77 @@
   "language": {
     "zh": "中文",
     "en": "English"
+  },
+  "deviceConnect": {
+    "redirectingDashboard": "稍后将自动前往云端控制台，你也可以立即进入。",
+    "saveName": "保存设备名称",
+    "nameSaved": "设备名称已保存。",
+    "detailsDescription": "查看设备信息与当前登录账号。保存名称不会改变设备绑定关系。",
+    "successTitle": "连接成功",
+    "failureTitle": "连接失败",
+    "successDescription": "这台 ArkKVM 设备已连接到账号 {{email}} 的 ArkKVM 云。",
+    "dashboard": "进入云端控制台",
+    "dashboardHint": "你可以在云端控制台中管理或移除此设备。",
+    "confirmationError": "未能完成连接，当前信息已保留，请重试。",
+    "boundAccountError": [
+      "此 ArkKVM 已连接到其他账号 ({{account}})。",
+      "请使用该账号登录 ArkKVM中国云服务并移除此设备，\n然后重试。"
+    ],
+    "failureSerial": "设备编号： {{serial}}",
+    "boundAccountUnknown": [
+      "此 ArkKVM 已连接到其他账号。",
+      "请使用该账号登录 ArkKVM中国云服务并移除此设备，\n然后重试。"
+    ],
+    "alreadyBoundTitle": "设备已连接云端",
+    "handoffError": "设备已连接，但后续设置未能继续。请重试继续设置，不会再次注册设备。",
+    "enterError": "设备名称已保存，但无法进入设备页面，请重试。",
+    "draftHint": "点击连接后会保存此设备名称。",
+    "setupTitle": "设备设置",
+    "account": "当前登录账号",
+    "accountWithProviders": "{{account}}（{{providers}}）",
+    "providers": {
+      "google": "Google",
+      "microsoft": "Microsoft",
+      "github": "GitHub",
+      "apple": "Apple",
+      "wechat": "微信"
+    },
+    "title": "连接设备",
+    "description": "将此 ArkKVM 连接到 <account>{{email}}</account> 的 ArkKVM 云服务。",
+    "connect": "连接",
+    "continue": "进入设备",
+    "connecting": "正在连接…",
+    "finishing": "正在完成设置…",
+    "information": "设备信息",
+    "serial": "设备编号",
+    "name": "设备名称",
+    "version": "系统版本",
+    "edit": "编辑设备名称",
+    "save": "保存",
+    "cancel": "取消",
+    "required": "请输入设备名称。",
+    "nameLength": "设备名称须为 3～20 个字符。",
+    "loading": "正在获取设备和账号信息…",
+    "retry": "重试",
+    "deviceError": "无法获取设备信息，请返回设备页面重新发起连接。",
+    "deviceLoadError": "设备已完成注册和命名，但设备详情获取失败。请重试进入设备，不会再次注册。",
+    "contextError": "无法获取云端登录上下文，请重新登录后继续连接设备。",
+    "cloudStateError": "设备已完成绑定，但无法获取云端跳转地址，请重试。",
+    "accountError": "无法验证云端账号，请重试或使用其他账号登录。",
+    "contextError": "无法读取设备信息，请检查设备连接后重试。",
+    "expired": "本次连接请求已过期，请返回设备页面重新发起。",
+    "unavailable": "暂不可用",
+    "notRight": "账号不对？",
+    "switch": "点击使用其他账号登录",
+    "switching": "正在退出登录…",
+    "switchError": "无法退出当前云端账号，请重试。",
+    "bindError": "设备连接失败。当前信息已保留，你可以重试。",
+    "nameError": "设备已连接，但名称保存失败。请重试保存名称，不会再次注册设备。",
+    "editError": "设备名称保存失败，已保留你的修改。",
+    "alreadyBound": "设备已连接云端账号。连接其他账号前，请先在设备设置中管理或解除现有绑定。",
+    "permission": "当前账号没有访问或连接该设备的权限。",
+    "legacy": "请完成此设备的名称设置。此页面不会将设备连接到其他账号。",
+    "back": "返回设备",
+    "oldSession": "当前云端版本未返回网页会话，请重新登录验证账号后再连接。"
   }
 }

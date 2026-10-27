@@ -156,6 +156,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, RemoteScreenProps>(
   ) => {
     const { t } = useTranslation('messages');
     const containerRef = useRef<HTMLDivElement>(null);
+    const videoAreaRef = useRef<HTMLDivElement>(null);
     const audioRef = useRef<HTMLAudioElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const lastVideoSizeRef = useRef<{ width: number; height: number } | null>(
@@ -163,10 +164,42 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, RemoteScreenProps>(
     );
     const [hasVideoContent, setHasVideoContent] = useState(false);
     const [videoAspectRatio, setVideoAspectRatio] = useState<string>('1920/1080');
+    const [fitVideoByWidth, setFitVideoByWidth] = useState(true);
 
     useEffect(() => {
       const image = new Image();
       image.src = DOT_CURSOR_IMAGE;
+    }, []);
+
+    useEffect(() => {
+      const video = videoRef.current;
+      const videoArea = videoAreaRef.current;
+      if (!video || !videoArea) return;
+
+      const updateVideoFit = () => {
+        const sourceWidth = video.videoWidth;
+        const sourceHeight = video.videoHeight;
+        const { width: areaWidth, height: areaHeight } =
+          videoArea.getBoundingClientRect();
+
+        if (!sourceWidth || !sourceHeight || !areaWidth || !areaHeight) return;
+
+        setFitVideoByWidth(
+          areaWidth / areaHeight <= sourceWidth / sourceHeight
+        );
+      };
+
+      const resizeObserver = new ResizeObserver(updateVideoFit);
+      resizeObserver.observe(videoArea);
+      video.addEventListener('loadedmetadata', updateVideoFit);
+      video.addEventListener('resize', updateVideoFit);
+      updateVideoFit();
+
+      return () => {
+        resizeObserver.disconnect();
+        video.removeEventListener('loadedmetadata', updateVideoFit);
+        video.removeEventListener('resize', updateVideoFit);
+      };
     }, []);
 
     // ========================================================================
@@ -229,7 +262,6 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, RemoteScreenProps>(
     useEffect(() => {
       onViewerStatusChange?.(viewerStatus);
     }, [viewerStatus, onViewerStatusChange]);
-    // console.log('ConnectionStateConnectionState',connectionState)
 
     // ========================================================================
     // Video Content State Management
@@ -538,7 +570,10 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, RemoteScreenProps>(
                 })}
               />
             ) : (
-              <div className="relative w-full h-full flex items-center justify-center">
+              <div
+                ref={videoAreaRef}
+                className="relative w-full h-full flex items-center justify-center"
+              >
                 {(
                   (connectionStatusMessage &&
                     (connectionState.webrtc !== 'connected' || !hasVideoContent) &&
@@ -599,7 +634,8 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, RemoteScreenProps>(
                   ref={videoRef}
                   tabIndex={-1}
                   className={cn(
-                    'inset-0 w-auto h-auto m-auto block max-w-full max-h-full object-contain outline-none focus:outline-none focus:ring-0 focus-visible:outline-none',
+                    'inset-0 m-auto block max-w-full max-h-full object-contain outline-none focus:outline-none focus:ring-0 focus-visible:outline-none',
+                    fitVideoByWidth ? 'w-full h-auto' : 'h-full w-auto',
                     hasVideoContent && !isHdmiErrorState(hdmiState) && 'border border-[var(--border-color)]',
                     ocrEnabled && 'pointer-events-none'
                   )}
@@ -643,6 +679,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, RemoteScreenProps>(
         connectionState.webrtc,
         connectionStatusMessage,
         hasVideoContent,
+        fitVideoByWidth,
         hdmiState,
         audioRef,
         videoRef,

@@ -1,6 +1,16 @@
 import { env } from '@/utils';
 import { createLogger } from '@/utils/logger';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  OutboundIceGate,
+  beginNegotiation,
+  buildSignalingOutbound,
+  clearWebRTCSessionId,
+  createUserSignalingIdentity,
+  parseMintedClientId,
+  parseSessionId,
+  type SignalingIdentity,
+} from '@/utils/webrtcSignalingIdentity';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useWebSocket from 'react-use-websocket';
 
 const logger = createLogger('useDesktopRtc');
@@ -15,7 +25,7 @@ export type WebSocketConnectionState =
   | 'disconnected' // WebSocket disconnected normally
   | 'error' // WebSocket connection error
   | 'reconnecting' // WebSocket is reconnecting
-  | 'closed' // WebSocket closed
+  | 'closed'; // WebSocket closed
 
 // WebRTC connection state
 export type WebRTCConnectionState =
@@ -24,7 +34,7 @@ export type WebRTCConnectionState =
   | 'connected'
   | 'disconnected'
   | 'failed'
-  | 'closed'
+  | 'closed';
 export type ViewerStatus =
   | 'initializing'
   | 'ws_connecting'
@@ -53,25 +63,23 @@ export const ViewerStatusMessage: Record<ViewerStatus, string> = {
   failed: 'Connection failed',
   closed: 'Connection closed',
 };
-export const PeerConnectionStateMessage: Record<WebRTCConnectionState, string> =
-  {
-    new: 'Initializing peer connection...',
-    connecting: 'Establishing peer connection...',
-    connected: 'Peer connection established, waiting for media...',
-    disconnected: 'Peer connection lost, preparing to reconnect...',
-    failed: 'Peer connection failed, preparing to reconnect...',
-    closed: 'Peer connection closed',
-  };
-export const IceConnectionStateMessage: Record<WebRTCConnectionState, string> =
-  {
-    new: 'Initializing ICE connection...',
-    checking: 'Establishing ICE connection...',
-    connected: 'ICE connection established, waiting for media...',
-    completed: 'ICE connection completed',
-    disconnected: 'ICE connection lost, preparing to reconnect...',
-    failed: 'ICE connection failed, preparing to reconnect...',
-    closed: 'ICE connection closed',
-  };
+export const PeerConnectionStateMessage: Record<WebRTCConnectionState, string> = {
+  new: 'Initializing peer connection...',
+  connecting: 'Establishing peer connection...',
+  connected: 'Peer connection established, waiting for media...',
+  disconnected: 'Peer connection lost, preparing to reconnect...',
+  failed: 'Peer connection failed, preparing to reconnect...',
+  closed: 'Peer connection closed',
+};
+export const IceConnectionStateMessage: Record<WebRTCConnectionState, string> = {
+  new: 'Initializing ICE connection...',
+  checking: 'Establishing ICE connection...',
+  connected: 'ICE connection established, waiting for media...',
+  completed: 'ICE connection completed',
+  disconnected: 'ICE connection lost, preparing to reconnect...',
+  failed: 'ICE connection failed, preparing to reconnect...',
+  closed: 'ICE connection closed',
+};
 export const NegotiationStatusMessage = {
   creatingLocalOffer: 'Creating local SDP offer...',
   waitingRemoteAnswer: 'Local SDP sent, waiting for remote answer...',
@@ -85,25 +93,20 @@ const _getLogTime = () => {
   return `${now.toTimeString().split(' ')[0]}.${ms}`;
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const log = (...args: any[]) =>
-  addLog(`${LOG_PREFIX} ${args.join(' ')}`, 'info');
+const log = (...args: any[]) => addLog(`${LOG_PREFIX} ${args.join(' ')}`, 'info');
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const logError = (...args: any[]) =>
-  addLog(`${LOG_PREFIX} ${args.join(' ')}`, 'error');
+const logError = (...args: any[]) => addLog(`${LOG_PREFIX} ${args.join(' ')}`, 'error');
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const logWarn = (...args: any[]) =>
-  addLog(`${LOG_PREFIX} ${args.join(' ')}`, 'warning');
+const logWarn = (...args: any[]) => addLog(`${LOG_PREFIX} ${args.join(' ')}`, 'warning');
 
 export const ConnectionStatusText = {
   remoteAnswerApplied: 'Remote answer applied, waiting for media streams...',
   wsWaitingDeviceInfo: 'WebSocket connected, waiting for device information...',
   wsDisconnected: 'WebSocket disconnected',
   wsError: 'WebSocket connection error',
-  deviceInfoReceived:
-    'Device information received, preparing WebRTC connection...',
+  deviceInfoReceived: 'Device information received, preparing WebRTC connection...',
   creatingPeerConnection: 'Creating peer connection...',
-  iceGatheringComplete:
-    'ICE candidate gathering completed, waiting for connection...',
+  iceGatheringComplete: 'ICE candidate gathering completed, waiting for connection...',
   iceGathering: 'Gathering ICE candidates...',
   mediaTrackReceived: 'Media track received, waiting for video to start...',
   idle: '',
@@ -111,122 +114,136 @@ export const ConnectionStatusText = {
 
 // Combined connection state
 export type ConnectionState = {
-  ws: WebSocketConnectionState
-  webrtc: WebRTCConnectionState
-}
+  ws: WebSocketConnectionState;
+  webrtc: WebRTCConnectionState;
+};
 
 // Export data channel types for upper layer declaration
 export interface DataChannels {
-  rpc: RTCDataChannel
-  terminal: RTCDataChannel
-  serial: RTCDataChannel
-  disk: RTCDataChannel
-  input: RTCDataChannel
-  inputUnstable: RTCDataChannel
+  rpc: RTCDataChannel;
+  terminal: RTCDataChannel;
+  serial: RTCDataChannel;
+  disk: RTCDataChannel;
+  input: RTCDataChannel;
+  inputUnstable: RTCDataChannel;
 }
 
 // Log entry structure
 export interface LogEntry {
-  message: string
-  timestamp: number
-  type: 'info' | 'error' | 'warning' | 'success'
+  message: string;
+  timestamp: number;
+  type: 'info' | 'error' | 'warning' | 'success';
 }
 
 // Hook configuration options
 export interface UseDesktopRtcOptions {
   // WebSocket address
-  serverUrl: string
+  serverUrl: string;
+
+  // Connection role: user (human console) or agent (automation)
+  clientType?: 'user' | 'agent';
 
   // WebSocket request headers
-  headers?: Record<string, string>
+  headers?: Record<string, string>;
 
   // Auto connect on component mount
-  autoConnect?: boolean
+  autoConnect?: boolean;
 
   // Auto reconnect on disconnect
-  shouldReconnect?: boolean
+  shouldReconnect?: boolean;
 
   // Max reconnect attempts (0 for infinite)
-  reconnectAttempts?: number
+  reconnectAttempts?: number;
 
   // Reconnect interval (milliseconds)
-  reconnectInterval?: number
+  reconnectInterval?: number;
 
   // Reconnect interval exponential backoff factor
-  reconnectBackoffFactor?: number
+  reconnectBackoffFactor?: number;
 
   // Max reconnect interval (milliseconds)
-  maxReconnectDelay?: number
+  maxReconnectDelay?: number;
 
   // Additional STUN/TURN servers
-  iceServers?: RTCIceServer[]
+  iceServers?: RTCIceServer[];
 
   // Max log entries to keep
-  maxLogEntries?: number
+  maxLogEntries?: number;
 
   // Whether to output logs to console
-  shareToConsole?: boolean
+  shareToConsole?: boolean;
 
   // WebRTC configuration
-  rtcConfig?: RTCConfiguration
+  rtcConfig?: RTCConfiguration;
 
   // Whether to capture audio
-  captureAudio?: boolean
-  onMessage?: (data: unknown) => void
+  captureAudio?: boolean;
+  onMessage?: (data: unknown) => void;
   // Callback when RTCPeerConnection is created
-  onPeerConnection?: (pc: RTCPeerConnection) => void
+  onPeerConnection?: (pc: RTCPeerConnection) => void;
   // Callback when data channels are created
-  onDataChannels?: (channels: DataChannels) => void
+  onDataChannels?: (channels: DataChannels) => void;
   // Callback when RTCPeerConnectionState changes
-  onPeerConnectionStateChange?: (
-    state: WebRTCConnectionState | RTCPeerConnectionState
-  ) => void
+  onPeerConnectionStateChange?: (state: WebRTCConnectionState | RTCPeerConnectionState) => void;
 
   // Optional: External video element Ref for precise binding (multi-instance scenario)
-  videoRef?: React.RefObject<HTMLVideoElement>
+  videoRef?: React.RefObject<HTMLVideoElement>;
 
   // Callback notification on connection lost
-  onConnectionLost?: (type: 'websocket' | 'webrtc', reason?: string) => void
+  onConnectionLost?: (type: 'websocket' | 'webrtc', reason?: string) => void;
 
   // View-only mode: skip sendonly transceivers and data channels (for preview/monitoring)
-  viewOnly?: boolean
+  viewOnly?: boolean;
 
   // Optional: External audio element Ref
-  audioRef?: React.RefObject<HTMLAudioElement>
+  audioRef?: React.RefObject<HTMLAudioElement>;
 }
 
 // Hook return type
 export interface UseDesktopRtcResult {
   // Current connection state
-  connectionState: ConnectionState
-  viewerStatus: ViewerStatus
+  connectionState: ConnectionState;
+  viewerStatus: ViewerStatus;
   // Ref bound to video element
-  videoRef: React.RefObject<HTMLVideoElement>
-  audioRef?: React.RefObject<HTMLAudioElement>
+  videoRef: React.RefObject<HTMLVideoElement>;
+  audioRef?: React.RefObject<HTMLAudioElement>;
   // webrtc
-  peerConnection: RTCPeerConnection | null
+  peerConnection: RTCPeerConnection | null;
 
   // Manual disconnect method
-  disconnect: () => void
+  disconnect: () => void;
   // Manually re-initiate WebRTC connection (when WebSocket is still available)
-  reconnect: (force?: boolean) => void
+  reconnect: (force?: boolean) => void;
   // Manually unmute and try to play (to satisfy browser gesture policy)
-  unmute: () => void
+  unmute: () => void;
   // WebAudio: Set gain (1.0 for original volume)
-  boostAudio: (gain: number) => void
+  boostAudio: (gain: number) => void;
   // WebAudio: Resume audio context after gesture
-  resumeAudio: () => Promise<void>
-  connectionStatusMessage: string
-  peerConnectionState: RTCPeerConnectionState
+  resumeAudio: () => Promise<void>;
+  connectionStatusMessage: string;
+  peerConnectionState: RTCPeerConnectionState;
   // Get current peer id related info (ufrag, pwd, state, etc.)
   getPeerId: () => {
-    localUfrag: string | null
-    localPwd: string | null
-    remoteUfrag: string | null
-    remotePwd: string | null
-    state: RTCPeerConnectionState
-    signalingState: RTCSignalingState
-  } | null
+    localUfrag: string | null;
+    localPwd: string | null;
+    remoteUfrag: string | null;
+    remotePwd: string | null;
+    state: RTCPeerConnectionState;
+    signalingState: RTCSignalingState;
+  } | null;
+}
+
+// Minimal typings for experimental WebRTC codec-preference APIs not yet in lib.dom.
+interface RTCRtpCodecCapability {
+  mimeType: string;
+}
+
+interface RTCRtpTransceiverWithCodecPrefs {
+  setCodecPreferences?(codecs: RTCRtpCodecCapability[]): void;
+}
+
+interface RTCRtpReceiverWithCapabilities {
+  getCapabilities?(kind: 'audio' | 'video'): { codecs: RTCRtpCodecCapability[] } | null;
 }
 
 const LOG_LEVEL_WEIGHT: Record<LogEntry['type'], number> = {
@@ -253,13 +270,13 @@ function addLog(message: string, type: LogEntry['type'] = 'info') {
   if (!import.meta.env.DEV) return;
   if (LOG_LEVEL_WEIGHT[type] < getRuntimeLogLevelWeight()) return;
 
-  const logMethod =
-    type === 'error' ? 'error' : type === 'warning' ? 'warn' : 'info';
+  const logMethod = type === 'error' ? 'error' : type === 'warning' ? 'warn' : 'info';
   logger[logMethod](`[WebRTC Audio] ${message}`);
 }
 
 export const useDesktopRtc = ({
   serverUrl,
+  clientType,
   autoConnect = true,
   shouldReconnect = true,
   reconnectAttempts = 5,
@@ -291,12 +308,9 @@ export const useDesktopRtc = ({
   const audioGainRef = useRef<GainNode | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const unmutedRef = useRef(false);
-  const touchUnlockHandlerRef = useRef<((event: TouchEvent) => void) | null>(
-    null
-  );
+  const touchUnlockHandlerRef = useRef<((event: TouchEvent) => void) | null>(null);
 
-  const [peerConnectionState, setPeerConnectionState] =
-    useState<RTCPeerConnectionState>('new');
+  const [peerConnectionState, setPeerConnectionState] = useState<RTCPeerConnectionState>('new');
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef<number>(0);
   const manualCloseRef = useRef<boolean>(false);
@@ -304,24 +318,37 @@ export const useDesktopRtc = ({
     ws: 'disconnected',
     webrtc: 'new',
   });
-  const [viewerStatus, setViewerStatus] =
-    useState<ViewerStatus>('initializing');
+  const [viewerStatus, setViewerStatus] = useState<ViewerStatus>('initializing');
 
-  const [connectionStatusMessage, setConnectionStatusMessage] =
-    useState<string>(''); // Connection status message (user-facing text handled below)
-  const updateViewerStatus = useCallback(
-    (status: ViewerStatus, syncMessage: boolean = true) => {
-      setViewerStatus(status);
-      if (syncMessage) {
-        setConnectionStatusMessage(ViewerStatusMessage[status]);
-      }
-    },
-    []
-  );
+  const signalingUrl = useMemo(() => {
+    if (!serverUrl) return serverUrl;
+    const url = new URL(serverUrl, window.location.href);
+    url.searchParams.set('clientType', clientType ?? 'user');
+    return url.toString();
+  }, [serverUrl, clientType]);
+
+  const [connectionStatusMessage, setConnectionStatusMessage] = useState<string>(''); // Connection status message (user-facing text handled below)
+  const updateViewerStatus = useCallback((status: ViewerStatus, syncMessage: boolean = true) => {
+    setViewerStatus(status);
+    if (syncMessage) {
+      setConnectionStatusMessage(ViewerStatusMessage[status]);
+    }
+  }, []);
   const isCreatingOffer = useRef(false); // Whether creating offer
   const offerSentTime = useRef<number>(0); // Record offer send time
   const answerTimeoutRef = useRef<number | null>(null); // Answer timeout timer
-  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]); // ICE candidates buffered before remote description
+  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]); // inbound ICE before remoteDescription
+  const outboundIceGateRef = useRef(new OutboundIceGate()); // cloud: hold local ICE until session_id
+  const sendWebRTCSignalRef = useRef<(type: string, data: unknown) => void>(() => {});
+  const signalingIdentityRef = useRef<SignalingIdentity>(
+    createUserSignalingIdentity(
+      env.target === 'cloud' ? 'cloud' : 'lan',
+      clientType ?? 'user'
+    )
+  );
+  useEffect(() => {
+    signalingIdentityRef.current.clientType = clientType ?? 'user';
+  }, [clientType]);
   const videoTransformWorkerRef = useRef<Worker | null>(null); // Video transform worker reference
   const internalVideoRef = useRef<HTMLVideoElement>(null);
   const internalAudioRef = useRef<HTMLAudioElement>(null);
@@ -329,11 +356,10 @@ export const useDesktopRtc = ({
   const audioRef = externalAudioRef ?? internalAudioRef;
 
   useEffect(() => {
-    if (autoConnect && serverUrl) {
+    if (autoConnect && signalingUrl) {
       updateViewerStatus('ws_connecting');
     }
-  }, [autoConnect, serverUrl, updateViewerStatus]);
-
+  }, [autoConnect, signalingUrl, updateViewerStatus]);
 
   // Create data channels (RPC / terminal / serial / disk)
   const createDataChannels = useCallback(
@@ -447,11 +473,17 @@ export const useDesktopRtc = ({
       remoteStreamRef.current = stream;
       const audioTracks = stream.getAudioTracks();
       const videoTracks = stream.getVideoTracks();
-      addLog(`Binding remote stream - Video tracks: ${videoTracks.length}, Audio tracks: ${audioTracks.length}`, 'info');
+      addLog(
+        `Binding remote stream - Video tracks: ${videoTracks.length}, Audio tracks: ${audioTracks.length}`,
+        'info'
+      );
 
       // Check audio track status
       audioTracks.forEach((track, index) => {
-        addLog(`Audio track ${index}: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`, 'info');
+        addLog(
+          `Audio track ${index}: enabled=${track.enabled}, muted=${track.muted}, readyState=${track.readyState}`,
+          'info'
+        );
       });
 
       // Bind to video element
@@ -472,7 +504,10 @@ export const useDesktopRtc = ({
         if ('disablePictureInPicture' in v) vAny.disablePictureInPicture = true;
 
         v.onloadedmetadata = () => {
-          addLog(`Video metadata loaded - videoWidth: ${v.videoWidth}, videoHeight: ${v.videoHeight}`, 'info');
+          addLog(
+            `Video metadata loaded - videoWidth: ${v.videoWidth}, videoHeight: ${v.videoHeight}`,
+            'info'
+          );
           v.play().catch(err => {
             addLog(`Video play failed: ${err.message}`, 'error');
           });
@@ -556,9 +591,7 @@ export const useDesktopRtc = ({
       }
 
       // Calculate response time
-      const responseTime = offerSentTime.current
-        ? Date.now() - offerSentTime.current
-        : 0;
+      const responseTime = offerSentTime.current ? Date.now() - offerSentTime.current : 0;
       log(`⏱️ Answer received in ${responseTime}ms`);
 
       log('📊 Peer connection state:', {
@@ -592,7 +625,7 @@ export const useDesktopRtc = ({
     lastMessage: _lastMessage,
     readyState: _readyState,
     getWebSocket,
-  } = useWebSocket(serverUrl, {
+  } = useWebSocket(signalingUrl, {
     heartbeat: true,
     retryOnError: true,
     // WebSocket reconnection also uses externally passed parameters
@@ -600,9 +633,7 @@ export const useDesktopRtc = ({
     reconnectInterval: reconnectInterval,
     shouldReconnect: () => !manualCloseRef.current,
     onReconnectStop: numAttempts => {
-      logError(
-        `[WS] reconnect stopped after ${numAttempts} attempts, giving up`
-      );
+      logError(`[WS] reconnect stopped after ${numAttempts} attempts, giving up`);
     },
     onOpen: () => {
       manualCloseRef.current = false;
@@ -623,9 +654,7 @@ export const useDesktopRtc = ({
         ws: isAbnormal ? 'error' : 'disconnected',
       }));
       setConnectionStatusMessage(
-        isAbnormal
-          ? ConnectionStatusText.wsError
-          : ConnectionStatusText.wsDisconnected
+        isAbnormal ? ConnectionStatusText.wsError : ConnectionStatusText.wsDisconnected
       );
       if (manualCloseRef.current) {
         updateViewerStatus('closed');
@@ -633,7 +662,7 @@ export const useDesktopRtc = ({
         updateViewerStatus('reconnecting');
       }
     },
-    onError: (_e) => {
+    onError: _e => {
       // Browser emits an 'error' event for every handshake failure but hides
       // the cause. Real detail surfaces in the following onClose.
       // Kept silent here to avoid log spam during auto-reconnect loops.
@@ -647,13 +676,29 @@ export const useDesktopRtc = ({
 
       if (eventData === 'pong') return;
 
-      const message =
-        typeof eventData === 'string' ? JSON.parse(eventData) : eventData;
+      const message = typeof eventData === 'string' ? JSON.parse(eventData) : eventData;
       const { type, data } = message || {};
       if (!type) return;
 
+      if (type === 'error') {
+        const code = data?.code ?? '';
+        const errorMessage = data?.message ?? 'Unknown signaling error';
+        logWarn('[WS] signaling error: %s — %s', code, errorMessage);
+        if (code === 'agentSlotOccupied') {
+          manualCloseRef.current = true;
+          updateViewerStatus('failed');
+          setConnectionStatusMessage(errorMessage);
+          getWebSocket()?.close();
+        }
+        return;
+      }
+
       if (type === 'device-metadata') {
         const { deviceVersion } = data || {};
+        const minted = parseMintedClientId(message);
+        if (minted) {
+          signalingIdentityRef.current.cloudClientId = minted;
+        }
         if (!deviceVersion) return;
 
         setConnectionState(prev => ({ ...prev, webrtc: 'connecting' }));
@@ -667,10 +712,7 @@ export const useDesktopRtc = ({
         log('[WebRTC][%d] Received answer from server', Date.now());
         const pc = peerConnectionRef.current;
         if (!pc) {
-          logError(
-            '[WebRTC][%d] No PeerConnection when answer received!',
-            Date.now()
-          );
+          logError('[WebRTC][%d] No PeerConnection when answer received!', Date.now());
           return;
         }
 
@@ -679,13 +721,27 @@ export const useDesktopRtc = ({
           iceConnectionState: pc.iceConnectionState,
           connectionState: pc.connectionState,
         });
-        const answerPayload = message?.sd || data;
-        if (typeof answerPayload !== 'string') {
-          addLog(
-            `Unexpected answer payload type: ${typeof answerPayload}`,
-            'warning'
+        if (peerConnectionRef.current !== pc || pc.signalingState !== 'have-local-offer') {
+          log(
+            '[WebRTC][%d] Ignoring answer; signalingState=%s',
+            Date.now(),
+            pc.signalingState
           );
           return;
+        }
+        const answerPayload = message?.sd || data;
+        if (typeof answerPayload !== 'string') {
+          addLog(`Unexpected answer payload type: ${typeof answerPayload}`, 'warning');
+          return;
+        }
+        const sid = parseSessionId(message);
+        if (sid) {
+          signalingIdentityRef.current.webrtcSessionId = sid;
+          log('[WebRTC] Cloud session_id cached: %s', sid);
+        }
+        const held = outboundIceGateRef.current.flush(signalingIdentityRef.current);
+        for (const c of held) {
+          sendWebRTCSignalRef.current('new-ice-candidate', c);
         }
         applyRemoteDescription(answerPayload);
         return;
@@ -693,8 +749,7 @@ export const useDesktopRtc = ({
 
       if (type !== 'new-ice-candidate' && type !== 'ice') return;
 
-      const candidatePayload =
-        message?.candidate || data?.candidate || message?.data || data;
+      const candidatePayload = message?.candidate || data?.candidate || message?.data || data;
       const candidate: RTCIceCandidateInit | null =
         typeof candidatePayload === 'string'
           ? {
@@ -714,30 +769,29 @@ export const useDesktopRtc = ({
 
       pc.addIceCandidate(candidate).catch(err => {
         logError('[WebRTC][%d] Failed to add ICE candidate:', Date.now(), err);
-        addLog(
-          `Failed to add ICE candidate: ${err.message}, signalingState=${pc.signalingState}`
-        );
+        addLog(`Failed to add ICE candidate: ${err.message}, signalingState=${pc.signalingState}`);
       });
     },
   });
-  // Send WebRTC signal
+  // Send WebRTC signal (cloud stamps client_id / session_id via identity helpers).
   const sendWebRTCSignal = useCallback((type: string, data: unknown) => {
     const ws = getWebSocket();
     if (ws && ws.readyState === WebSocket.OPEN) {
-      const message = { type, data };
+      const message = buildSignalingOutbound(
+        signalingIdentityRef.current,
+        type,
+        data
+      );
       const messageStr = JSON.stringify(message);
       ws.send(messageStr);
     } else {
-      logError(
-        '[WebRTC][%d] Cannot send signal: WebSocket not open',
-        Date.now(),
-        {
-          type,
-          wsState: ws?.readyState,
-        }
-      );
+      logError('[WebRTC][%d] Cannot send signal: WebSocket not open', Date.now(), {
+        type,
+        wsState: ws?.readyState,
+      });
     }
   }, [getWebSocket]);
+  sendWebRTCSignalRef.current = sendWebRTCSignal;
 
   const rebindRemoteMediaToLiveEdge = useCallback(() => {
     const stream = remoteStreamRef.current;
@@ -767,14 +821,17 @@ export const useDesktopRtc = ({
     });
   }, [videoRef]);
 
-  const requestRemoteKeyFrame = useCallback((reason: string) => {
-    sendWebRTCSignal('request-keyframe', {
-      reason,
-      forceIdr: true,
-      ts: Date.now(),
-    });
-    addLog(`Requested remote keyframe: ${reason}`, 'info');
-  }, [sendWebRTCSignal]);
+  const requestRemoteKeyFrame = useCallback(
+    (reason: string) => {
+      sendWebRTCSignal('request-keyframe', {
+        reason,
+        forceIdr: true,
+        ts: Date.now(),
+      });
+      addLog(`Requested remote keyframe: ${reason}`, 'info');
+    },
+    [sendWebRTCSignal]
+  );
 
   const clearDataChannelBacklog = useCallback(() => {
     const channels = dataChannelsRef.current;
@@ -789,111 +846,116 @@ export const useDesktopRtc = ({
   // WebRTC disconnect: thoroughly clean up PeerConnection, media tracks and local media elements.
   // Forced reconnects can keep media attached so the last video frame remains visible
   // while a replacement PeerConnection is negotiated.
-  const stopWebRTCReconnectionAndCleanup = useCallback((options?: { keepMedia?: boolean }) => {
-    clearDataChannelBacklog();
+  const stopWebRTCReconnectionAndCleanup = useCallback(
+    (options?: { keepMedia?: boolean }) => {
+      clearDataChannelBacklog();
 
-    // 1. Detach media elements first (stop decoding/rendering immediately)
-    const v = videoRef.current;
-    if (v && !options?.keepMedia) {
-      v.srcObject = null;
-    }
+      // 1. Detach media elements first (stop decoding/rendering immediately)
+      const v = videoRef.current;
+      if (v && !options?.keepMedia) {
+        v.srcObject = null;
+      }
 
-    const a = audioRef.current;
-    if (a && !options?.keepMedia) {
-      a.srcObject = null;
-    }
+      const a = audioRef.current;
+      if (a && !options?.keepMedia) {
+        a.srcObject = null;
+      }
 
-    // 2. Close all DataChannels (clear handlers + close)
-    const dcs = dataChannelsRef.current;
-    if (dcs) {
-      try {
-        // DataChannels is an object with channel properties
-        const channels = Object.values(dcs).filter(
-          (ch): ch is RTCDataChannel => ch instanceof RTCDataChannel
-        );
-        channels.forEach(dc => {
-          try {
-            dc.onopen = null;
-            dc.onclose = null;
-            dc.onmessage = null;
-            dc.onerror = null;
-            if (dc.readyState !== 'closed') {
-              dc.close();
-            }
-          } catch {}
-        });
-      } catch {}
-    }
-    dataChannelsRef.current = null;
-
-    // 3. Clear all PeerConnection event handlers (prevent memory leaks)
-    const pc = peerConnectionRef.current;
-    if (pc) {
-      try {
-        pc.ontrack = null;
-        pc.onicecandidate = null;
-        pc.ondatachannel = null;
-        pc.onconnectionstatechange = null;
-        pc.oniceconnectionstatechange = null;
-        pc.onsignalingstatechange = null;
-        pc.onnegotiationneeded = null;
-      } catch {}
-
-      // 4. Stop all sender tracks (local media: mic/camera/screen)
-      try {
-        pc.getSenders().forEach(sender => {
-          try {
-            sender.track?.stop();
-          } catch {}
-        });
-      } catch {}
-
-      if (!options?.keepMedia) {
-        // 5. Stop all receiver tracks (remote media)
+      // 2. Close all DataChannels (clear handlers + close)
+      const dcs = dataChannelsRef.current;
+      if (dcs) {
         try {
-          pc.getReceivers().forEach(receiver => {
+          // DataChannels is an object with channel properties
+          const channels = Object.values(dcs).filter(
+            (ch): ch is RTCDataChannel => ch instanceof RTCDataChannel
+          );
+          channels.forEach(dc => {
             try {
-              receiver.track?.stop();
+              dc.onopen = null;
+              dc.onclose = null;
+              dc.onmessage = null;
+              dc.onerror = null;
+              if (dc.readyState !== 'closed') {
+                dc.close();
+              }
             } catch {}
           });
         } catch {}
       }
+      dataChannelsRef.current = null;
 
-      // 6. Close PeerConnection
-      try {
-        pc.close();
-      } catch {}
+      // 3. Clear all PeerConnection event handlers (prevent memory leaks)
+      const pc = peerConnectionRef.current;
+      if (pc) {
+        try {
+          pc.ontrack = null;
+          pc.onicecandidate = null;
+          pc.ondatachannel = null;
+          pc.onconnectionstatechange = null;
+          pc.oniceconnectionstatechange = null;
+          pc.onsignalingstatechange = null;
+          pc.onnegotiationneeded = null;
+        } catch {}
 
-      peerConnectionRef.current = null;
-    }
+        // 4. Stop all sender tracks (local media: mic/camera/screen)
+        try {
+          pc.getSenders().forEach(sender => {
+            try {
+              sender.track?.stop();
+            } catch {}
+          });
+        } catch {}
 
-    // 7. Stop and clear remote stream reference
-    const remoteStream = remoteStreamRef.current;
-    if (remoteStream && !options?.keepMedia) {
-      try {
-        remoteStream.getTracks().forEach(track => {
+        if (!options?.keepMedia) {
+          // 5. Stop all receiver tracks (remote media)
           try {
-            track.stop();
+            pc.getReceivers().forEach(receiver => {
+              try {
+                receiver.track?.stop();
+              } catch {}
+            });
           } catch {}
-        });
-      } catch {}
-      remoteStreamRef.current = null;
-    }
+        }
 
-    // 8. Clear negotiation state and flags
-    isCreatingOffer.current = false;
-    pendingCandidatesRef.current = [];
-    if (answerTimeoutRef.current !== null) {
-      window.clearTimeout(answerTimeoutRef.current);
-      answerTimeoutRef.current = null;
-    }
+        // 6. Close PeerConnection
+        try {
+          pc.close();
+        } catch {}
 
-    // 9. Update connection state
-    setPeerConnectionState('closed');
-    onPeerConnectionStateChange?.('closed');
-    setConnectionState({ ws: 'closed', webrtc: 'closed' });
-    updateViewerStatus('closed');
-  }, [videoRef, audioRef, clearDataChannelBacklog]);
+        peerConnectionRef.current = null;
+      }
+
+      // 7. Stop and clear remote stream reference
+      const remoteStream = remoteStreamRef.current;
+      if (remoteStream && !options?.keepMedia) {
+        try {
+          remoteStream.getTracks().forEach(track => {
+            try {
+              track.stop();
+            } catch {}
+          });
+        } catch {}
+        remoteStreamRef.current = null;
+      }
+
+      // 8. Clear negotiation state and flags
+      isCreatingOffer.current = false;
+      pendingCandidatesRef.current = [];
+      outboundIceGateRef.current.clear();
+      clearWebRTCSessionId(signalingIdentityRef.current);
+      if (answerTimeoutRef.current !== null) {
+        window.clearTimeout(answerTimeoutRef.current);
+        answerTimeoutRef.current = null;
+      }
+
+      // 9. Update connection state
+      setPeerConnectionState('closed');
+      onPeerConnectionStateChange?.('closed');
+      setConnectionState({ ws: 'closed', webrtc: 'closed' });
+      updateViewerStatus('closed');
+    },
+    [videoRef, audioRef, clearDataChannelBacklog]
+  );
   // WebSocket disconnect
   const stopWebSocketReconnectionAndCleanup = useCallback(() => {
     manualCloseRef.current = true;
@@ -901,11 +963,7 @@ export const useDesktopRtc = ({
     // Actively close underlying WebSocket to prevent subsequent reconnection
     try {
       const ws = getWebSocket();
-      if (
-        ws &&
-        (ws.readyState === WebSocket.OPEN ||
-          ws.readyState === WebSocket.CONNECTING)
-      ) {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close(1000, 'client disconnect');
       }
     } catch {}
@@ -913,7 +971,6 @@ export const useDesktopRtc = ({
 
   const setupTransceiversAndCodecs = useCallback(
     (pc: RTCPeerConnection) => {
-
       try {
         if (viewOnly) {
           // View-only: only receive video (and optionally audio), no send channels or data channels needed
@@ -930,7 +987,9 @@ export const useDesktopRtc = ({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const others = codecs.filter((c: any) => !/H264/i.test(c.mimeType));
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            try { (vTrans as any).setCodecPreferences(h264.concat(others)); } catch {}
+            try {
+              (vTrans as any).setCodecPreferences(h264.concat(others));
+            } catch {}
           }
 
           if (captureAudio) {
@@ -944,7 +1003,9 @@ export const useDesktopRtc = ({
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const rest = acaps.codecs.filter((c: any) => !/PCMA/i.test(c.mimeType));
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              try { (aTrans as any).setCodecPreferences([...pcma, ...rest]); } catch {}
+              try {
+                (aTrans as any).setCodecPreferences([...pcma, ...rest]);
+              } catch {}
             }
           }
           return;
@@ -976,12 +1037,20 @@ export const useDesktopRtc = ({
             const orderedSendCodecs = [...pcmaCodecs, ...otherCodecs];
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (audioSendTrans as any).setCodecPreferences(orderedSendCodecs);
-            addLog(`Audio SEND codec: PCMA preferred, total ${orderedSendCodecs.length} codecs (compatible)`, 'info');
+            addLog(
+              `Audio SEND codec: PCMA preferred, total ${orderedSendCodecs.length} codecs (compatible)`,
+              'info'
+            );
           } else {
-            console.warn('[WebRTC DEBUG] setCodecPreferences not available on send transceiver or no codecs');
+            logger.warn(
+              'setCodecPreferences not available on send transceiver or no codecs'
+            );
           }
         } catch (e) {
-          addLog(`Failed to set audio send codec preferences: ${e instanceof Error ? e.message : String(e)}`, 'warning');
+          addLog(
+            `Failed to set audio send codec preferences: ${e instanceof Error ? e.message : String(e)}`,
+            'warning'
+          );
         }
 
         // Configure audio encoding parameters.
@@ -1041,15 +1110,15 @@ export const useDesktopRtc = ({
           if (sortedCodecs.length > 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (aTrans as any).setCodecPreferences(sortedCodecs);
-            addLog(`Audio RECV codec: PCMA preferred, total ${sortedCodecs.length} codecs (compatible mode)`, 'info');
+            addLog(
+              `Audio RECV codec: PCMA preferred, total ${sortedCodecs.length} codecs (compatible mode)`,
+              'info'
+            );
           } else {
             addLog('No supported audio codecs found, falling back to defaults', 'warning');
           }
         } else {
-          addLog(
-            'Browser does not support setting audio codec preferences',
-            'warning'
-          );
+          addLog('Browser does not support setting audio codec preferences', 'warning');
         }
         //
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1078,6 +1147,8 @@ export const useDesktopRtc = ({
   );
   // WebRTC
   const startWebRTC = useCallback(() => {
+    beginNegotiation(signalingIdentityRef.current);
+    outboundIceGateRef.current.clear();
     if (peerConnectionRef.current) {
       try {
         peerConnectionRef.current.close();
@@ -1107,8 +1178,6 @@ export const useDesktopRtc = ({
           : {}),
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
-        // Pre-warm STUN/TURN probing so candidates are ready before offer is sent.
-        iceCandidatePoolSize: 4,
         ...rtcConfig,
       };
       if (configuration.iceServers?.length === 0) {
@@ -1141,10 +1210,9 @@ export const useDesktopRtc = ({
           } catch {}
           videoTransformWorkerRef.current = null;
         }
-        const worker = new Worker(
-          new URL('../webrtc/videoTransform.worker.ts', import.meta.url),
-          { type: 'module' as 'classic' | 'module' }
-        );
+        const worker = new Worker(new URL('../webrtc/videoTransform.worker.ts', import.meta.url), {
+          type: 'module' as 'classic' | 'module',
+        });
         videoTransformWorkerRef.current = worker;
 
         pc.getReceivers().forEach(receiver => {
@@ -1252,8 +1320,13 @@ export const useDesktopRtc = ({
     };
 
     pc.onnegotiationneeded = async () => {
+      if (pc.signalingState !== 'stable' || isCreatingOffer.current) {
+        return;
+      }
       try {
         isCreatingOffer.current = true;
+        beginNegotiation(signalingIdentityRef.current);
+        outboundIceGateRef.current.clear();
         updateViewerStatus('negotiating');
         log('🔷 Negotiation needed, creating offer...');
         setConnectionStatusMessage(NegotiationStatusMessage.creatingLocalOffer);
@@ -1303,9 +1376,7 @@ export const useDesktopRtc = ({
             return;
           }
 
-          logError(
-            '❌ Answer timeout: No response from server after 10 seconds'
-          );
+          logError('❌ Answer timeout: No response from server after 10 seconds');
           logError('🔍 Possible causes:');
           logError('  1. Server not receiving offer');
           logError('  2. Server WebRTC not initialized');
@@ -1349,7 +1420,13 @@ export const useDesktopRtc = ({
       // Use toJSON() to send normalized RTCIceCandidateInit format.
       // This helps keep compatibility with the Rust WebRTC backend.
       const candidateInit = candidate.toJSON();
-      sendWebRTCSignal('new-ice-candidate', candidateInit);
+      const ready = outboundIceGateRef.current.push(
+        signalingIdentityRef.current,
+        candidateInit
+      );
+      for (const c of ready) {
+        sendWebRTCSignal('new-ice-candidate', c);
+      }
     };
 
     pc.onicegatheringstatechange = () => {
@@ -1371,13 +1448,19 @@ export const useDesktopRtc = ({
 
     pc.ontrack = event => {
       updateViewerStatus('media_loading');
-      addLog(`PC ontrack event - Track kind: ${event.track.kind}, transceivers: ${pc.getTransceivers().length}`, 'info');
+      addLog(
+        `PC ontrack event - Track kind: ${event.track.kind}, transceivers: ${pc.getTransceivers().length}`,
+        'info'
+      );
       const receiver = event.receiver;
       receiver.playoutDelayHint = 0;
       if (receiver.track.kind === 'video') {
         addLog('Set video playoutDelayHint = 0', 'info');
       } else if (receiver.track.kind === 'audio') {
-        addLog(`Audio track received - enabled: ${event.track.enabled}, muted: ${event.track.muted}, readyState: ${event.track.readyState}`, 'info');
+        addLog(
+          `Audio track received - enabled: ${event.track.enabled}, muted: ${event.track.muted}, readyState: ${event.track.readyState}`,
+          'info'
+        );
       }
       const stream = event.streams[0] ?? new MediaStream([event.track]);
       // Track arrived but video element may not be rendering yet.
@@ -1386,9 +1469,7 @@ export const useDesktopRtc = ({
       if (stream) {
         bindRemoteStream(stream);
       } else {
-        addLog(
-          '⚠️ No streams in ontrack event, will create MediaStream manually'
-        );
+        addLog('⚠️ No streams in ontrack event, will create MediaStream manually');
       }
     };
   }, [
@@ -1412,29 +1493,27 @@ export const useDesktopRtc = ({
   ]);
 
   // Manually trigger one WebRTC reconnect (only valid when WebSocket is connected).
-  const reconnect = useCallback((force = false) => {
-    // Allow follow-up automatic reconnection.
-    manualCloseRef.current = false;
+  const reconnect = useCallback(
+    (force = false) => {
+      // Allow follow-up automatic reconnection.
+      manualCloseRef.current = false;
 
-    const ws = getWebSocket();
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
+      const ws = getWebSocket();
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
 
-    // Re-start WebRTC negotiation when not connected or already failed.
-    const state = connectionState.webrtc;
-    if (!force && state === 'connected') return;
+      // Re-start WebRTC negotiation when not connected or already failed.
+      const state = connectionState.webrtc;
+      if (!force && state === 'connected') return;
 
-    try {
-      stopWebRTCReconnectionAndCleanup({ keepMedia: force });
-    } catch {}
-    startWebRTC();
-  }, [
-    connectionState.webrtc,
-    getWebSocket,
-    startWebRTC,
-    stopWebRTCReconnectionAndCleanup,
-  ]);
+      try {
+        stopWebRTCReconnectionAndCleanup({ keepMedia: force });
+      } catch {}
+      startWebRTC();
+    },
+    [connectionState.webrtc, getWebSocket, startWebRTC, stopWebRTCReconnectionAndCleanup]
+  );
   // Auto-reconnect based on WebRTC state (supports retry count and exponential backoff).
   useEffect(() => {
     if (!shouldReconnect) return;
@@ -1473,14 +1552,9 @@ export const useDesktopRtc = ({
       // disconnected may be a transient blip; give it a grace period before
       // tearing things down. failed is terminal, retry on regular backoff.
       const DISCONNECTED_GRACE_MS = 5000;
-      const backoffDelay = Math.min(
-        baseInterval * Math.pow(factor, attempt),
-        maxDelay
-      );
+      const backoffDelay = Math.min(baseInterval * Math.pow(factor, attempt), maxDelay);
       const delay =
-        state === 'disconnected'
-          ? Math.max(DISCONNECTED_GRACE_MS, backoffDelay)
-          : backoffDelay;
+        state === 'disconnected' ? Math.max(DISCONNECTED_GRACE_MS, backoffDelay) : backoffDelay;
 
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
@@ -1489,11 +1563,7 @@ export const useDesktopRtc = ({
         // (e.g. ICE re-established during the grace period), skip restart.
         const livePc = peerConnectionRef.current;
         const liveState = livePc?.iceConnectionState;
-        if (
-          liveState === 'connected' ||
-          liveState === 'completed' ||
-          liveState === 'checking'
-        ) {
+        if (liveState === 'connected' || liveState === 'completed' || liveState === 'checking') {
           reconnectAttemptsRef.current = 0;
           return;
         }
@@ -1577,13 +1647,11 @@ export const useDesktopRtc = ({
 
     return {
       // Local ICE ufrag.
-      localUfrag:
-        pc.localDescription?.sdp.match(/a=ice-ufrag:(.+)/)?.[1] || null,
+      localUfrag: pc.localDescription?.sdp.match(/a=ice-ufrag:(.+)/)?.[1] || null,
       // Local ICE password.
       localPwd: pc.localDescription?.sdp.match(/a=ice-pwd:(.+)/)?.[1] || null,
       // Remote ICE ufrag.
-      remoteUfrag:
-        pc.remoteDescription?.sdp.match(/a=ice-ufrag:(.+)/)?.[1] || null,
+      remoteUfrag: pc.remoteDescription?.sdp.match(/a=ice-ufrag:(.+)/)?.[1] || null,
       // Remote ICE password.
       remotePwd: pc.remoteDescription?.sdp.match(/a=ice-pwd:(.+)/)?.[1] || null,
       // Connection state.

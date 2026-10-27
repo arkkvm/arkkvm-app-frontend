@@ -1,128 +1,55 @@
-/**
- * @Purpose:
- * @Descripttion:
- * @version:
- * @Author: zhanglei
- * @Date: 2026-05-18 16:15:49
- * @LastEditors: zhanglei
- * @LastEditTime: 2026-05-26 16:04:59
- */
 import { env } from './env';
 
-const BLOCKED_SCHEMES = [
-  'javascript:',
-  'data:',
-  'vbscript:',
-  'file:',
-  'ftp:',
-  'blob:',
-];
-
-function hasUnsafeControlChars(value: string): boolean {
-  return /[\r\n\t]/.test(value);
+function hasUnsafeUrlInput(value: string): boolean {
+  return /[\u0000-\u0020\u007f-\u009f\\]/.test(value) ||
+    /%(?:0[0-9a-f]|1[0-9a-f]|7f|5c)/i.test(value);
 }
 
-function isUnsafeRelativeRedirect(value: string): boolean {
-  const normalized = value.replace(/\\/g, '/').toLowerCase();
-
-  return (
-    normalized.startsWith('//') ||
-    normalized.startsWith('/%2f') ||
-    normalized.startsWith('/%5c')
-  );
-}
-
-/**
- * Validates a redirect URL and returns it if safe, otherwise returns null.
- *
- * Allowed cases:
- *  - Relative paths starting with '/' but not protocol-relative or encoded protocol-relative URLs
- *  - Absolute HTTPS URLs whose origin matches window.location.origin
- *    or env.officialCloudAppUrl
- */
-export function getSafeRedirectUrl(
-  value: string | null | undefined
-): string | null {
-  if (!value) return null;
-
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  if (hasUnsafeControlChars(trimmed)) return null;
-
-  const lower = trimmed.toLowerCase();
-
-  if (BLOCKED_SCHEMES.some(scheme => lower.startsWith(scheme))) {
-    return null;
-  }
-
-  if (trimmed.startsWith('/')) {
-    if (isUnsafeRelativeRedirect(trimmed)) return null;
-    return trimmed;
-  }
-
+/** Validate web URLs without granting OAuth redirect trust. */
+export function getSafeExternalUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || !value || hasUnsafeUrlInput(value)) return null;
+  if (!/^https?:\/\//i.test(value)) return null;
   try {
-    const parsed = new URL(trimmed);
-
-    const allowedOrigins = new Set<string>([window.location.origin]);
-
-    if (env.officialCloudAppUrl) {
-      allowedOrigins.add(new URL(env.officialCloudAppUrl).origin);
-    }
-
-    if (parsed.protocol === 'https:' && allowedOrigins.has(parsed.origin)) {
-      return parsed.href;
-    }
+    const url = new URL(value);
+    if (url.username || url.password || !url.hostname) return null;
+    const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (loopback && !env.isDev) return null;
+    if (url.protocol !== 'https:' && !(env.isDev && loopback && url.protocol === 'http:')) return null;
+    return url.href;
   } catch {
-    // invalid URL
-  }
-
-  return null;
-}
-
-/**
- * Normalizes and validates a user-configured cloud URL.
- * Returns only the origin: scheme + host + port.
- *
- * Supports both https:// and http:// for private/LAN self-hosted deployments.
- * Returns null if the URL is invalid or uses a disallowed scheme.
- */
-export function normalizeCloudOrigin(
-  value: string | null | undefined
-): string | null {
-  if (!value) return null;
-
-  const raw = value.trim();
-  if (!raw) return null;
-
-  if (hasUnsafeControlChars(raw)) return null;
-
-  const lower = raw.toLowerCase();
-
-  if (BLOCKED_SCHEMES.some(scheme => lower.startsWith(scheme))) {
     return null;
   }
+}
 
-  if (raw.startsWith('//')) return null;
-
+/** Validate configured cloud/device addresses, including self-hosted HTTP deployments. */
+export function normalizeCloudOrigin(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw || hasUnsafeUrlInput(raw) || !/^https?:\/\//i.test(raw)) return null;
   try {
     const url = new URL(raw);
-
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      return null;
-    }
-
-    if (!url.hostname) {
-      return null;
-    }
-
-    if (url.username || url.password) {
-      return null;
-    }
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) return null;
     return url.origin;
   } catch {
     return null;
   }
+}
+
+/** Generic redirects allow only local paths or the current origin, including self-hosted clouds. */
+export function getSafeRedirectUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || !value || hasUnsafeUrlInput(value)) return null;
+  if (value.startsWith('/')) {
+    if (value.startsWith('//') || /^\/(?:%2f|%5c)/i.test(value)) return null;
+    return value;
+  }
+  const origin = normalizeCloudOrigin(value);
+  return origin && origin === window.location.origin ? new URL(value).href : null;
+}
+
+/** Syntax only. Device identity and ownership must be verified by the backend. */
+export function normalizeDeviceId(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/.test(value)
+    ? value : null;
 }
 
 /**

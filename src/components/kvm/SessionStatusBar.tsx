@@ -9,10 +9,12 @@
  */
 import { useVideoRenderFps } from '@/hooks/useVideoRenderFps';
 import { useAppStore } from '@/stores';
+import { useActiveDeviceSettings } from '@/stores/devicesStore';
 import { cn } from '@/utils';
 import { memo, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { keys, modifiers } from '../VirtualKeyboard/data/hidKeyCodes';
+import { useTranslation } from 'react-i18next';
 
 interface SessionStatusBarProps {
   videoRef?: React.RefObject<HTMLVideoElement | null>
@@ -24,6 +26,11 @@ const LED_ACTIVE_CLASS = 'text-(--primary) border-(--primary)';
 const LED_INACTIVE_CLASS = 'text-(--text-secondary) border-(--border)';
 
 const SessionStatusBar = ({ videoRef, peerState }: SessionStatusBarProps) => {
+  const { t } = useTranslation('common');
+  const agentControlOwner = useAppStore(s => s.agentControlOwner);
+  const agentViewOnly = useAppStore(s => s.agentViewOnly);
+  const mcpEnabled = useActiveDeviceSettings(s => s.mcpEnabled) === true;
+  const showAgentState = mcpEnabled && agentControlOwner !== undefined;
   const emptyVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Batch store subscriptions with shallow comparison for better performance
@@ -106,7 +113,7 @@ const SessionStatusBar = ({ videoRef, peerState }: SessionStatusBarProps) => {
     };
   }, [showKeyboardLeds, keyboardLedState]);
 
-  if (!showDiagnosticInfo && !showPressedKeys && !showKeyboardLeds) {
+  if (!showDiagnosticInfo && !showPressedKeys && !showKeyboardLeds && !showAgentState) {
     return null;
   }
   return (
@@ -116,24 +123,29 @@ const SessionStatusBar = ({ videoRef, peerState }: SessionStatusBarProps) => {
         {showDiagnosticInfo && (
           <>
             <li>
-              Resolution: {videoWidth}x{videoHeight}
+              Resolution: <span translate="no" className="notranslate">{videoWidth}x{videoHeight}</span>
             </li>
             <li>
-              Video Size: {rendered.w}x{rendered.h}
+              Video Size: <span translate="no" className="notranslate">{rendered.w}x{rendered.h}</span>
             </li>
             <li>
-              Pointer: {mouseX}x{mouseY}
+              Pointer: <span translate="no" className="notranslate">{mouseX}x{mouseY}</span>
             </li>
-            <li>FPS: {videoFps !== null ? videoFps.toFixed(1) : 'N/A'}</li>
-            <li>USB State: {actualUsbState}</li>
-            <li>HDMI State: {hdmiConnectionState}</li>
+            <li>FPS: <span translate="no" className="notranslate">{videoFps !== null ? videoFps.toFixed(1) : 'N/A'}</span></li>
+            <li>USB State: <span translate="no" className="notranslate">{actualUsbState}</span></li>
+            <li>HDMI State: <span translate="no" className="notranslate">{hdmiConnectionState}</span></li>
           </>
         )}
-         {showPressedKeys && <li>Keys: {displayKeys}</li>}
+        {showAgentState && (
+          <li>{t(agentControlOwner === 'agent'
+            ? 'controlLease.statusControlling'
+            : agentViewOnly ? 'controlLease.statusViewOnly' : 'controlLease.statusNotControlling')}</li>
+        )}
+         {showPressedKeys && <li>Keys: <span translate="no" className="notranslate">{displayKeys}</span></li>}
       </ul>
 
       {showKeyboardLeds && (
-        <div className="flex gap-[8px]">
+        <div translate="no" className="notranslate flex gap-[8px]">
           <span className={cn(LED_BASE_CLASS, ledStates.isCapsOn ? LED_ACTIVE_CLASS : LED_INACTIVE_CLASS)}>
             Caps Lock
           </span>

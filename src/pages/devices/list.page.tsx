@@ -7,6 +7,7 @@
  * @LastEditors: zhanglei
  * @LastEditTime: 2026-05-28 11:48:20
  */
+import { createLogger } from '@/utils/logger';
 import { request } from '@/api';
 import type { kvmIceConfigResponse } from '@/api/types';
 import { IconCloud } from '@/assets/icons';
@@ -24,6 +25,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useInterval } from 'usehooks-ts';
+
+const logger = createLogger('DeviceList');
 
 export const meta: PageMeta = {
   auth: true,
@@ -79,10 +82,10 @@ export default function DeviceList() {
         setDeviceList(data);
         try { sessionStorage.setItem('device_list_cache', JSON.stringify(data)); } catch {}
       } else {
-        console.error('API returned success: false', res);
+        logger.error('Failed to fetch devices', { code: res.code });
       }
     } catch (error) {
-      console.error('Failed to fetch devices:', error);
+      logger.error('Failed to fetch devices:', error);
     }
   }, []);
 
