@@ -808,6 +808,66 @@
         "authExpiredBefore": "If the login link expires or authentication does not complete, click \"",
         "authExpiredAfter": "\" and try again."
       }
+    },
+    "netbird": {
+      "title": "NetBird",
+      "setupKeyRecommended": "Recommended for always-on devices: peers added with a setup key do not need to log in again.",
+      "desc": "Connect ArkKVM to your NetBird network – NetBird Cloud or your own self-hosted management server",
+      "serverHint": "Self-host the whole control plane to stay independent of third-party services",
+      "managementUrlHint": "URL of your self-hosted NetBird management service",
+      "hostnamePlaceholder": "Device hostname (default)",
+      "setupKeyHint": "Create a setup key in the NetBird dashboard. It is only used once and never stored on the device.",
+      "enableHint": "Enable NetBird to connect to {{server}}.",
+      "peers": "{{connected}}/{{total}} peers connected",
+      "server": {
+        "cloud": "NetBird Cloud",
+        "selfHosted": "Self-hosted"
+      },
+      "status": {
+        "connecting": "Connecting...",
+        "connected": "Connected",
+        "offline": "Offline",
+        "loggedOut": "Needs Login",
+        "unknown": "Unknown"
+      },
+      "fields": {
+        "loginExpires": "Login expires",
+        "server": "Management server",
+        "managementUrl": "Management URL",
+        "hostname": "Peer hostname",
+        "setupKey": "Setup key",
+        "userCode": "Code:",
+        "management": "Management",
+        "status": "Status",
+        "netbirdIp": "NetBird IP",
+        "fqdn": "DNS name"
+      },
+      "actions": {
+        "authHint": "Join this ArkKVM to your NetBird network with SSO or a setup key.",
+        "ssoLogin": "Log in with SSO",
+        "openLogin": "Open Login page",
+        "joinWithKey": "Join with setup key",
+        "save": "Save",
+        "change": "Change",
+        "cancel": "Cancel"
+      },
+      "messages": {
+        "ssoSessionExpiryHint": "With SSO, NetBird ends the device's session after a while by default and it has to log in again – until then the KVM is unreachable over NetBird. Turn off \"Session Expiration\" in the settings of your NetBird dashboard, or join with a setup key below.",
+        "loginExpiryWarning": "This device joined via SSO and its session expires at the time shown – after that it is unreachable over NetBird until it logs in again. For an always-on KVM, turn off \"Session Expiration\" in the settings of your NetBird dashboard, or join with a setup key instead.",
+        "settingsSaved": "NetBird settings saved",
+        "joined": "ArkKVM joined your NetBird network",
+        "disabled": "NetBird is disabled",
+        "registerFailed": "NetBird registration failed",
+        "waitingForLogin": "Waiting for login to complete in the other tab...",
+        "serverChangeWarning": "Changing the management server removes this device's current NetBird identity. It has to join again afterwards.",
+        "tailscaleOverlap": "Tailscale is enabled as well. Both use the 100.64.0.0/10 range by default – make sure your NetBird network range does not overlap with your tailnet.",
+        "statusUnavailable": "NetBird is starting – status not available yet."
+      },
+      "errors": {
+        "managementUrlRequired": "Please enter the management URL",
+        "invalidManagementUrl": "Please enter a valid http(s) URL",
+        "invalidHostname": "Use letters, digits, '-' and '.' only (max. 63 characters)"
+      }
     }
   }
 }
