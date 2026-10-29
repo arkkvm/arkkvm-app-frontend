@@ -21,6 +21,9 @@ import type { AppSelectOption } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Textarea } from '../ui/textarea';
 import SettingBlock from './SettingBlock';
+import SettingNetbird from './SettingNetbird';
+import SettingPrivateNetwork from './SettingPrivateNetwork';
+import type { PrivateNetworkState, PrivateNetworkTarget } from '@/api/rpc/privateNetwork';
 import SettingPageContainer from './SettingPageContainer';
 import type { TailscaleConnectionState } from '@/api/rpc/tailscale';
 import {
@@ -69,6 +72,11 @@ export default function SettingAccessibility() {
     userEmail: string;
   } | null>(null);
   const [tailscaleLoginUrl, setTailscaleLoginUrl] = useState<string>('');
+
+  // Private network selector (none / Tailscale / NetBird). Older firmware
+  // without getPrivateNetwork keeps the independent switches.
+  const [privateNetworkManaged, setPrivateNetworkManaged] = useState(false);
+  const [netbirdRefreshKey, setNetbirdRefreshKey] = useState(0);
 
   const { showRestartDialog } = useRestartDialog();
   const { setNestedDeviceSetting } = useSettingsActions();
@@ -440,6 +448,33 @@ export default function SettingAccessibility() {
     [sendAsync, start, stop, fetchTailscaleState, setTailscaleStatus]
   );
 
+  // Same follow-up as the Tailscale switch: wait for the daemon, then offer a login link.
+  const afterTailscaleSelected = useCallback(async () => {
+    setTailscaleEnabled(true);
+    setTailscaleStatus('connecting');
+    await new Promise(resolve => setTimeout(resolve, 6000));
+    const tailscaleState = await fetchTailscaleState();
+    if (tailscaleState?.connectionState !== 'connected') {
+      void generateNewTailscaleLink();
+    }
+  }, [fetchTailscaleState, generateNewTailscaleLink]);
+
+  const handlePrivateNetworkState = useCallback((pn: PrivateNetworkState) => {
+    setTailscaleEnabled(pn.tailscale.enabled);
+    setNetbirdRefreshKey(k => k + 1);
+  }, []);
+
+  const handlePrivateNetworkSelected = useCallback(
+    (target: PrivateNetworkTarget) => {
+      if (target === 'tailscale') {
+        void afterTailscaleSelected();
+      } else {
+        void fetchTailscaleState();
+      }
+    },
+    [afterTailscaleSelected, fetchTailscaleState]
+  );
+
   const stopKeyEventPropagation = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Prevent event bubbling to avoid global hotkey/KVM capture
     e.stopPropagation();
@@ -764,127 +799,144 @@ export default function SettingAccessibility() {
             content={t('settings:accessibility.privateNetwork.desc')}
           >
             <SettingBlock.Bottom className="pl-6">
-              <SettingBlock
-                title={t('settings:accessibility.tailscale.title')}
-                content={t('settings:accessibility.tailscale.desc')}
-              >
-                <SettingBlock.Right>
-                  <Switch
-                    checked={tailscaleEnabled}
-                    onCheckedChange={handleTailscaleToggle}
-                    disabled={isLoading('switchTailscale')}
-                  />
-                </SettingBlock.Right>
+              <SettingPrivateNetwork
+                onActiveChange={setPrivateNetworkManaged}
+                onStateChange={handlePrivateNetworkState}
+                onSelected={handlePrivateNetworkSelected}
+              />
 
-                {tailscaleEnabled && (
-                  <SettingBlock.Bottom>
-                    <div className="flex flex-col gap-4 p-6  rounded-lg border border-(--border-color)">
-                      {/* Authentication State (needs_auth or logged_out) */}
-                      {tailscaleStatus !== 'connected' && tailscaleStatus !== 'connecting' && (
-                        <div className="flex flex-col gap-4">
-                          <p className="text-sm text-text-secondary">
-                            {t('settings:accessibility.tailscale.actions.authHint')}
-                          </p>
-                          <div className="flex items-center gap-3">
-                            <Button
-                              variant="primary"
-                              size="xs"
-                              onClick={openTailscaleLogin}
-                              disabled={!tailscaleLoginUrl || isLoading('registerTailscale')}
-                              loading={isLoading('registerTailscale')}
-                            >
-                              {t('settings:accessibility.tailscale.actions.openLogin')}
-                            </Button>
+              {(!privateNetworkManaged || tailscaleEnabled) && (
+                <SettingBlock
+                  title={t('settings:accessibility.tailscale.title')}
+                  content={t('settings:accessibility.tailscale.desc')}
+                >
+                  {!privateNetworkManaged && (
+                    <SettingBlock.Right>
+                      <Switch
+                        checked={tailscaleEnabled}
+                        onCheckedChange={handleTailscaleToggle}
+                        disabled={isLoading('switchTailscale')}
+                      />
+                    </SettingBlock.Right>
+                  )}
+
+                  {tailscaleEnabled && (
+                    <SettingBlock.Bottom>
+                      <div className="flex flex-col gap-4 p-6  rounded-lg border border-(--border-color)">
+                        {/* Authentication State (needs_auth or logged_out) */}
+                        {tailscaleStatus !== 'connected' && tailscaleStatus !== 'connecting' && (
+                          <div className="flex flex-col gap-4">
+                            <p className="text-sm text-text-secondary">
+                              {t('settings:accessibility.tailscale.actions.authHint')}
+                            </p>
+                            <div className="flex items-center gap-3">
+                              <Button
+                                variant="primary"
+                                size="xs"
+                                onClick={openTailscaleLogin}
+                                disabled={!tailscaleLoginUrl || isLoading('registerTailscale')}
+                                loading={isLoading('registerTailscale')}
+                              >
+                                {t('settings:accessibility.tailscale.actions.openLogin')}
+                              </Button>
+                            </div>
+                            <p className="text-sm text-text-muted">
+                              {t('settings:accessibility.tailscale.actions.authExpiredBefore')}
+                              <button
+                                onClick={() => generateNewTailscaleLink()}
+                                disabled={isLoading('registerTailscale')}
+                                className="text-blue-500 hover:text-blue-600 hover:underline disabled:opacity-50 disabled:cursor-not-allowed bg-transparent border-none cursor-pointer p-0"
+                              >
+                                {t('settings:accessibility.tailscale.actions.generateNewLink')}
+                              </button>
+                              {t('settings:accessibility.tailscale.actions.authExpiredAfter')}
+                            </p>
                           </div>
-                          <p className="text-sm text-text-muted">
-                            {t('settings:accessibility.tailscale.actions.authExpiredBefore')}
-                            <button
-                              onClick={() => generateNewTailscaleLink()}
-                              disabled={isLoading('registerTailscale')}
-                              className="text-blue-500 hover:text-blue-600 hover:underline disabled:opacity-50 disabled:cursor-not-allowed bg-transparent border-none cursor-pointer p-0"
-                            >
-                              {t('settings:accessibility.tailscale.actions.generateNewLink')}
-                            </button>
-                            {t('settings:accessibility.tailscale.actions.authExpiredAfter')}
-                          </p>
-                        </div>
-                      )}
+                        )}
 
-                      {/* Connecting State */}
-                      {tailscaleStatus === 'connecting' && (
-                        <div className="flex flex-col items-center justify-center py-8 gap-3">
-                          <Loading type="spinner" size="md" color="blue" />
-                          <p className="text-sm text-text-muted">
-                            {t('settings:accessibility.tailscale.status.connecting')}
-                          </p>
-                        </div>
-                      )}
+                        {/* Connecting State */}
+                        {tailscaleStatus === 'connecting' && (
+                          <div className="flex flex-col items-center justify-center py-8 gap-3">
+                            <Loading type="spinner" size="md" color="blue" />
+                            <p className="text-sm text-text-muted">
+                              {t('settings:accessibility.tailscale.status.connecting')}
+                            </p>
+                          </div>
+                        )}
 
-                      {/* Connected State */}
-                      {tailscaleStatus === 'connected' && tailscaleInfo && (
-                        <div className="flex flex-col">
-                          {/* Tailnet Section */}
-                          <div className="flex justify-between items-center pb-4 border-b border-(--border-color)">
-                            <div className="flex flex-col">
-                              <span className="text-sm text-text-muted">Tailnet</span>
+                        {/* Connected State */}
+                        {tailscaleStatus === 'connected' && tailscaleInfo && (
+                          <div className="flex flex-col">
+                            {/* Tailnet Section */}
+                            <div className="flex justify-between items-center pb-4 border-b border-(--border-color)">
+                              <div className="flex flex-col">
+                                <span className="text-sm text-text-muted">Tailnet</span>
+                                <span className="text-sm font-medium text-text">
+                                  {tailscaleInfo.userEmail}
+                                </span>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="xs"
+                                onClick={() => generateNewTailscaleLink(true)}
+                                disabled={isLoading('registerTailscale')}
+                                loading={isLoading('registerTailscale')}
+                              >
+                                Change
+                              </Button>
+                            </div>
+                            <div className="flex justify-between items-center py-4 border-b border-(--border-color)">
+                              <span className="text-sm text-text-muted">
+                                {t('settings:accessibility.tailscale.fields.status')}
+                              </span>
                               <span className="text-sm font-medium text-text">
-                                {tailscaleInfo.userEmail}
+                                {t('settings:accessibility.tailscale.status.connected')}
                               </span>
                             </div>
-                            <Button
-                              variant="outline"
-                              size="xs"
-                              onClick={() => generateNewTailscaleLink(true)}
-                              disabled={isLoading('registerTailscale')}
-                              loading={isLoading('registerTailscale')}
-                            >
-                              Change
-                            </Button>
-                          </div>
-                          <div className="flex justify-between items-center py-4 border-b border-(--border-color)">
-                            <span className="text-sm text-text-muted">
-                              {t('settings:accessibility.tailscale.fields.status')}
-                            </span>
-                            <span className="text-sm font-medium text-text">
-                              {t('settings:accessibility.tailscale.status.connected')}
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center py-4 border-b border-(--border-color)">
-                            <span className="text-sm text-text-muted">
-                              {t('settings:accessibility.tailscale.fields.tailscaleIp')}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-text select-text">
-                                {tailscaleInfo.ip}
+                            <div className="flex justify-between items-center py-4 border-b border-(--border-color)">
+                              <span className="text-sm text-text-muted">
+                                {t('settings:accessibility.tailscale.fields.tailscaleIp')}
                               </span>
-                              <CopyButton
-                                text={tailscaleInfo.ip}
-                                label="Tailscale IP"
-                                variant="ghost"
-                                size="xs"
-                              />
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-text select-text">
+                                  {tailscaleInfo.ip}
+                                </span>
+                                <CopyButton
+                                  text={tailscaleInfo.ip}
+                                  label="Tailscale IP"
+                                  variant="ghost"
+                                  size="xs"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex justify-between items-center pt-4">
+                              <span className="text-sm text-text-muted">MagicDNS</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-text select-text">
+                                  {tailscaleInfo.hostname}
+                                </span>
+                                <CopyButton
+                                  text={tailscaleInfo.hostname}
+                                  label="MagicDNS"
+                                  variant="ghost"
+                                  size="xs"
+                                />
+                              </div>
                             </div>
                           </div>
-                          <div className="flex justify-between items-center pt-4">
-                            <span className="text-sm text-text-muted">MagicDNS</span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-text select-text">
-                                {tailscaleInfo.hostname}
-                              </span>
-                              <CopyButton
-                                text={tailscaleInfo.hostname}
-                                label="MagicDNS"
-                                variant="ghost"
-                                size="xs"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </SettingBlock.Bottom>
-                )}
-              </SettingBlock>
+                        )}
+                      </div>
+                    </SettingBlock.Bottom>
+                  )}
+                </SettingBlock>
+              )}
+
+              {/* NetBird (self-hostable WireGuard mesh) */}
+              <SettingNetbird
+                tailscaleEnabled={tailscaleEnabled}
+                managed={privateNetworkManaged}
+                refreshKey={netbirdRefreshKey}
+              />
             </SettingBlock.Bottom>
           </SettingBlock>
         </div>

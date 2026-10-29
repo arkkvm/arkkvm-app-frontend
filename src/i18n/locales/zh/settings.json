@@ -803,6 +803,24 @@
       "title": "私有网络",
       "desc": "选择并启用远程访问的私有网络服务"
     },
+    "privateNetworkSelector": {
+      "title": "当前网络",
+      "desc": "选择一个用于远程访问的覆盖网络。只运行一个可以节省内存并避免地址段重叠。",
+      "options": {
+        "none": "无",
+        "both": "Tailscale + NetBird"
+      },
+      "pending": "正在切换到 {{next}}——在 {{next}} 连接成功之前，{{previous}} 会保持运行，因此您仍可访问此设备。",
+      "legacyBoth": "Tailscale 和 NetBird 均已启用。请选择其中一个以节省内存并避免地址段重叠。",
+      "sessionVia": "您当前通过 {{overlay}} 连接到此设备。",
+      "lockout": {
+        "title": "您正通过此网络连接",
+        "disable": "此页面是通过 {{current}} 打开的。关闭后连接将断开，在本地或通过其他方式重新启用之前，无法通过 {{current}} 访问此设备。",
+        "switch": "此页面是通过 {{current}} 打开的。在 {{next}} 连接成功之前，{{current}} 会保持运行，之后此页面将断开连接。请通过 {{next}} 地址重新打开此设备。",
+        "confirm": "仍然关闭",
+        "continue": "继续"
+      }
+    },
     "tailscale": {
       "title": "Tailscale",
       "desc": "将 ArkKVM 连接到您的 Tailscale 网络",
@@ -825,6 +843,66 @@
         "authHint": "请打开下方的登录页面以认证此 ArkKVM 设备。",
         "authExpiredBefore": "如果登录链接过期或认证未完成，请点击 \"",
         "authExpiredAfter": "\" 并重试。"
+      }
+    },
+    "netbird": {
+      "title": "NetBird",
+      "setupKeyRecommended": "推荐用于常驻在线设备：使用设置密钥添加的节点无需重新登录。",
+      "desc": "将 ArkKVM 连接到您的 NetBird 网络（NetBird Cloud 或自托管的管理服务器）",
+      "serverHint": "自托管整个控制平面，不依赖第三方服务",
+      "managementUrlHint": "自托管 NetBird 管理服务的地址",
+      "hostnamePlaceholder": "设备主机名（默认）",
+      "setupKeyHint": "请在 NetBird 控制台中创建设置密钥。该密钥仅使用一次，不会保存在设备上。",
+      "enableHint": "启用 NetBird 以连接到 {{server}}。",
+      "peers": "已连接 {{connected}}/{{total}} 个节点",
+      "server": {
+        "cloud": "NetBird Cloud",
+        "selfHosted": "自托管"
+      },
+      "status": {
+        "connecting": "连接中...",
+        "connected": "已连接",
+        "offline": "离线",
+        "loggedOut": "需要登录",
+        "unknown": "未知"
+      },
+      "fields": {
+        "loginExpires": "登录过期时间",
+        "server": "管理服务器",
+        "managementUrl": "管理地址",
+        "hostname": "节点主机名",
+        "setupKey": "设置密钥",
+        "userCode": "验证码：",
+        "management": "管理服务器",
+        "status": "状态",
+        "netbirdIp": "NetBird IP",
+        "fqdn": "DNS 名称"
+      },
+      "actions": {
+        "authHint": "使用 SSO 或设置密钥将此 ArkKVM 加入您的 NetBird 网络。",
+        "ssoLogin": "使用 SSO 登录",
+        "openLogin": "打开登录页面",
+        "joinWithKey": "使用设置密钥加入",
+        "save": "保存",
+        "change": "更改",
+        "cancel": "取消"
+      },
+      "messages": {
+        "ssoSessionExpiryHint": "使用 SSO 时，NetBird 默认会在一段时间后结束此设备的会话，需要重新登录，在此之前无法通过 NetBird 访问 KVM。请在 NetBird 控制台的设置中关闭 \"Session Expiration\"，或使用下方的设置密钥加入。",
+        "loginExpiryWarning": "此设备通过 SSO 加入，其会话将在上述时间过期，之后在重新登录前无法通过 NetBird 访问。对于常驻在线的 KVM，请在 NetBird 控制台的设置中关闭 \"Session Expiration\"，或改用设置密钥加入。",
+        "settingsSaved": "NetBird 设置已保存",
+        "joined": "ArkKVM 已加入您的 NetBird 网络",
+        "disabled": "NetBird 已禁用",
+        "registerFailed": "NetBird 注册失败",
+        "waitingForLogin": "正在等待另一个标签页中的登录完成...",
+        "serverChangeWarning": "更改管理服务器将删除此设备当前的 NetBird 身份，之后需要重新加入。",
+        "tailscaleOverlap": "Tailscale 也已启用。两者默认都使用 100.64.0.0/10 地址段，请确保 NetBird 网络地址段与 tailnet 不重叠。",
+        "statusUnavailable": "NetBird 正在启动，暂时无法获取状态。"
+      },
+      "errors": {
+        "managementUrlRequired": "请输入管理地址",
+        "invalidManagementUrl": "请输入有效的 http(s) 地址",
+        "invalidHostname": "仅允许字母、数字、'-' 和 '.'（最多 63 个字符）"
       }
     }
   }

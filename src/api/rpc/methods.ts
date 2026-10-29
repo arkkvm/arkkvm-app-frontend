@@ -11,6 +11,13 @@ import type {
   SwitchTailscaleParams,
   TailscaleStateResponse,
 } from './tailscale';
+import type {
+  NetbirdStateResponse,
+  RegisterNetbirdParams,
+  RegisterNetbirdResponse,
+  SwitchNetbirdParams,
+} from './netbird';
+import type { PrivateNetworkState, SetPrivateNetworkParams } from './privateNetwork';
 
 export interface StorageFileInfo {
   createdAt: string; // ISO timestamp
@@ -212,6 +219,12 @@ export interface MethodParamsMap {
   switchTailscale: SwitchTailscaleParams;
   registerTailscale: void;
   registerTailscaleForce: void;
+  getNetbirdState: void;
+  switchNetbird: SwitchNetbirdParams;
+  registerNetbird: RegisterNetbirdParams;
+  registerNetbirdForce: RegisterNetbirdParams;
+  getPrivateNetwork: void;
+  setPrivateNetwork: SetPrivateNetworkParams;
   collectEvidence: void;
   getLocalFileInfo: { path: string };
   startLocalFileDownload: { path: string; offset?: number };
@@ -238,6 +251,12 @@ export interface MethodResultMap extends Record<MethodName, unknown> {
   switchTailscale: null;
   registerTailscale: RegisterTailscaleResponse;
   registerTailscaleForce: RegisterTailscaleResponse;
+  getNetbirdState: NetbirdStateResponse;
+  switchNetbird: null;
+  registerNetbird: RegisterNetbirdResponse;
+  registerNetbirdForce: RegisterNetbirdResponse;
+  getPrivateNetwork: PrivateNetworkState;
+  setPrivateNetwork: null;
   getVlanSettings: GetVlanSettingsResponse;
   getJigglerState: boolean;
   getJigglerConfig: JigglerConfig;
